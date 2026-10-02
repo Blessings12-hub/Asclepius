@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import PptxGenJS from "pptxgenjs";
 import PDFDocument from "pdfkit";
+import pdf from "pdf-parse/lib/pdf-parse.js";
 
 const { PASSWORD, ANTHROPIC_API_KEY, SECRET = "change-me", MODEL = "claude-sonnet-4-6", OWNER = "Student", PORT = 3000 } = process.env;
 const DB = "data/db.json";
@@ -25,6 +26,7 @@ let db = fs.existsSync(DB)
   ? JSON.parse(fs.readFileSync(DB, "utf8"))
   : { courses: Object.entries(SUBJECTS).flatMap(([y, l]) => l.map((title) => ({ id: id(), year: +y, title }))), materials: [] };
 const save = () => fs.writeFileSync(DB, JSON.stringify(db, null, 1));
+db.cards ||= []; db.plan ||= []; db.results ||= [];
 save();
 
 // ---- AI helpers ----
@@ -85,6 +87,7 @@ app.post("/api/materials", upload.single("file"), wrap(async (req, res) => {
   let body = req.body.body || "";
   if (type === "link" && url) body = await pageText(url);
   if (req.file && /\.(txt|md)$/i.test(req.file.originalname)) body = fs.readFileSync(req.file.path, "utf8");
+  if (req.file && /\.pdf$/i.test(req.file.originalname)) body = (await pdf(fs.readFileSync(req.file.path))).text.slice(0, 60000);
   if (tr === "1" && body) body = await translate(body);
   const m = { id: id(), courseId, type, title: title || "Untitled", url, body, file: req.file?.filename || "" };
   db.materials.push(m); save(); res.json(m);
@@ -115,33 +118,98 @@ app.post("/api/ai", wrap(async (req, res) => {
 }));
 
 // ---- presentations (PowerPoint + PDF) ----
+const UA = { "user-agent": "Asclepius/0.2 (personal study app)" };
+async function wikiImage(q) {
+  try {
+    const u = "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6&gsrlimit=6&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=900&gsrsearch=" + encodeURIComponent(q + " filetype:bitmap");
+    const j = await (await fetch(u, { headers: UA })).json();
+    for (const p of Object.values(j.query?.pages || {})) {
+      const i = p.imageinfo?.[0];
+      if (i && /\.(jpe?g|png)$/i.test(i.thumburl || "")) {
+        const b = Buffer.from(await (await fetch(i.thumburl, { headers: UA })).arrayBuffer());
+        const lic = i.extmetadata?.LicenseShortName?.value || "see source";
+        return { b, png: /\.png$/i.test(i.thumburl), credit: `Image: ${p.title.replace("File:", "")}, Wikimedia Commons, ${lic}` };
+      }
+    }
+  } catch {}
+  return null;
+}
 app.post("/api/present", wrap(async (req, res) => {
   const { courseId, topic, format } = req.body;
   const raw = await claude(
-    "Return ONLY JSON: an array of 8-12 slides, each {\"title\":string,\"bullets\":[3-5 short strings],\"notes\":string}. Plain, natural student-written wording. No markdown, no mention of AI.",
+    'Return ONLY JSON: an array of 8-12 slides, each {"title":string,"bullets":[3-5 short strings],"notes":string,"image":"2-4 word search query for a real diagram or photo"}. Plain, natural student-written wording. No markdown, no mention of AI.',
     `Topic: ${topic}\n\nMy materials:\n${context(courseId).slice(0, 20000)}`, 6000);
   const slides = JSON.parse(raw.replace(/```json|```/g, "").trim());
+  const imgs = await Promise.all(slides.map((s) => wikiImage(s.image || s.title)));
   if (format === "pdf") {
     const doc = new PDFDocument({ layout: "landscape", size: "A4", info: { Title: topic, Author: OWNER, Producer: "", Creator: "" } });
     const chunks = []; doc.on("data", (c) => chunks.push(c));
     slides.forEach((s, i) => {
       if (i) doc.addPage();
-      doc.fontSize(30).fillColor("#14232B").text(s.title, 60, 60, { width: 720 });
-      doc.moveDown().fontSize(20).list(s.bullets, { bulletRadius: 3, textIndent: 16, bulletIndent: 8 });
+      const m = imgs[i];
+      doc.fontSize(30).fillColor("#14232B").text(s.title, 60, 50, { width: 720 });
+      doc.fontSize(20).list(s.bullets, 60, 120, { width: m ? 400 : 720, bulletRadius: 3, textIndent: 16, bulletIndent: 8 });
+      if (m) { doc.image(m.b, 490, 120, { fit: [300, 280] }); doc.fontSize(8).fillColor("#5a6d70").text(m.credit, 490, 410, { width: 300 }); }
     });
     doc.end(); await new Promise((r) => doc.on("end", r));
     res.type("pdf").send(Buffer.concat(chunks));
   } else {
     const p = new PptxGenJS();
     p.author = OWNER; p.company = ""; p.title = topic; p.layout = "LAYOUT_WIDE";
-    slides.forEach((s) => {
-      const sl = p.addSlide();
+    slides.forEach((s, i) => {
+      const sl = p.addSlide(), m = imgs[i];
       sl.addText(s.title, { x: 0.6, y: 0.4, w: 12, h: 1, fontSize: 32, bold: true, color: "14232B" });
-      sl.addText(s.bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })), { x: 0.8, y: 1.6, w: 11.5, h: 5, fontSize: 22, color: "14232B", valign: "top" });
+      sl.addText(s.bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })), { x: 0.8, y: 1.6, w: m ? 7 : 11.5, h: 5, fontSize: 22, color: "14232B", valign: "top" });
+      if (m) {
+        sl.addImage({ data: `image/${m.png ? "png" : "jpeg"};base64,${m.b.toString("base64")}`, x: 8.2, y: 1.6, w: 4.5, h: 3.6, sizing: { type: "contain", w: 4.5, h: 3.6 } });
+        sl.addText(m.credit, { x: 8.2, y: 5.3, w: 4.5, h: 0.5, fontSize: 8, color: "5A6D70" });
+      }
       sl.addNotes(s.notes || "");
     });
     res.type("application/vnd.openxmlformats-officedocument.presentationml.presentation").send(await p.write({ outputType: "nodebuffer" }));
   }
 }));
+
+// ---- flashcards (spaced repetition) ----
+const parseJSON = (t) => JSON.parse(t.replace(/```json|```/g, "").trim());
+app.post("/api/cards/generate", wrap(async (req, res) => {
+  const { courseId, prompt = "" } = req.body;
+  const out = parseJSON(await claude('Return ONLY a JSON array of 15 flashcards [{"front":string,"back":string}] for a medical student. Short, one fact per card, from the materials when possible.', `Focus: ${prompt || "whole course"}\n\n${context(courseId)}`, 5000));
+  out.forEach((c) => db.cards.push({ id: id(), courseId, front: c.front, back: c.back, due: Date.now(), ease: 2.5, interval: 0 }));
+  save(); res.json({ added: out.length });
+}));
+app.get("/api/cards/due", (q, res) => res.json(db.cards.filter((c) => c.due <= Date.now()).slice(0, 50)));
+app.post("/api/cards/:id/review", (req, res) => {
+  const c = db.cards.find((x) => x.id === req.params.id), g = +req.body.grade;
+  if (!c) return res.status(404).json({ error: "No such card" });
+  if (g === 0) { c.ease = Math.max(1.3, c.ease - 0.2); c.interval = 0; c.due = Date.now() + 6e5; }
+  else {
+    c.interval = c.interval ? Math.round(c.interval * c.ease * [0, 0.8, 1, 1.3][g]) || 1 : [0, 1, 2, 4][g];
+    c.ease = Math.max(1.3, c.ease + [0, -0.1, 0, 0.1][g]); c.due = Date.now() + c.interval * 864e5;
+  }
+  save(); res.json({ ok: 1 });
+});
+
+// ---- question bank + weak topics ----
+app.post("/api/quiz", wrap(async (req, res) => {
+  const { courseId, prompt = "" } = req.body;
+  const questions = parseJSON(await claude('Return ONLY a JSON array of 10 exam-style questions [{"topic":string (2-3 words),"q":string,"options":[5 strings],"answer":index 0-4,"why":string}].', `Focus: ${prompt || "whole course"}\n\n${context(courseId)}`, 5000));
+  res.json({ questions });
+}));
+app.post("/api/results", (req, res) => {
+  db.results.push({ courseId: req.body.courseId, topic: String(req.body.topic).slice(0, 60), correct: !!req.body.correct });
+  save(); res.json({ ok: 1 });
+});
+app.get("/api/stats", (q, res) => {
+  const t = {};
+  db.results.forEach((r) => { const k = r.topic; t[k] ||= { topic: k, n: 0, ok: 0 }; t[k].n++; t[k].ok += r.correct; });
+  res.json(Object.values(t).filter((x) => x.n >= 2).map((x) => ({ ...x, pct: Math.round((100 * x.ok) / x.n) })).sort((a, b) => a.pct - b.pct).slice(0, 8));
+});
+
+// ---- study planner ----
+app.get("/api/plan", (q, res) => res.json([...db.plan].sort((a, b) => (a.date || "9").localeCompare(b.date || "9"))));
+app.post("/api/plan", (req, res) => { db.plan.push({ id: id(), title: String(req.body.title).slice(0, 120), date: req.body.date || "", done: false }); save(); res.json({ ok: 1 }); });
+app.patch("/api/plan/:id", (req, res) => { const p = db.plan.find((x) => x.id === req.params.id); if (p) p.done = !!req.body.done; save(); res.json({ ok: 1 }); });
+app.delete("/api/plan/:id", (req, res) => { db.plan = db.plan.filter((x) => x.id !== req.params.id); save(); res.json({ ok: 1 }); });
 
 app.listen(PORT, () => console.log(`Asclepius running at http://localhost:${PORT}`));

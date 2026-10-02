@@ -6,7 +6,9 @@ A private study workspace for medical school. Single user, self-hosted.
 - Materials per course: notes, web links, files, and 3D lessons (embed link such as a Sketchfab URL, or upload a `.glb`/`.gltf`)
 - Translate to English: paste text or a link in any language, or tick the box when saving a material
 - Study help: ask questions, make study guides and quizzes from your own materials
-- Presentations: download PowerPoint or PDF built from your topic and materials
+- Flashcards with spaced repetition, interactive quizzes that track your weak topics, and a study planner (all under Today)
+- Presentations: PowerPoint or PDF built from your topic and materials, with diagrams from Wikimedia Commons (credit printed on each slide)
+- Offline: installable on your phone; pages you have opened keep working without internet
 
 ## Run
 
@@ -21,9 +23,7 @@ Needs Node 20+. Data lives in `data/` (git-ignored). Deploy behind HTTPS (Render
 ## Notes
 
 - Only add 3D and course content you have the right to use (open-access sources, your university's licensed material, your own files).
-- Uploaded PDFs are stored and linked, but only `.txt`/`.md` files, notes and links feed the AI. Paste PDF text into a note to include it.
-- Presentations have no images yet and carry your name (`OWNER`) in the file properties.
-
-## Next
-
-Flashcards with spaced repetition, question bank tracking, study planner, offline mode, slide images.
+- PDFs with real text are read automatically. Scanned (image-only) PDFs are not; paste their text into a note.
+- Slide images are found by search, so check each one fits the slide. Keep the credit line.
+- Presentations carry your name (`OWNER`) in the file properties. Check your school's AI policy for graded work.
+- Offline mode needs HTTPS (or localhost) to install.
