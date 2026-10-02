@@ -8,6 +8,9 @@ A private study workspace for medical school. Single user, self-hosted.
 - Study help: ask questions, make study guides and quizzes from your own materials
 - Flashcards with spaced repetition, interactive quizzes that track your weak topics, and a study planner (all under Today)
 - Presentations: PowerPoint or PDF built from your topic and materials, with diagrams from Wikimedia Commons (credit printed on each slide)
+- Photo capture: snap handwriting, slides or book pages; they become translated, searchable notes
+- Anki: export and import cards as Anki text files
+- Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
 ## Run

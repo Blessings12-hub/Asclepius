@@ -53,7 +53,7 @@ const context = (courseId) =>
 
 // ---- app + auth ----
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "20mb" }));
 const tok = () => crypto.createHmac("sha256", SECRET).update(PASSWORD || "").digest("hex");
 const authed = (req) => (req.headers.cookie || "").split(/;\s*/).includes("t=" + tok());
 app.post("/api/login", (req, res) => {
@@ -211,5 +211,68 @@ app.get("/api/plan", (q, res) => res.json([...db.plan].sort((a, b) => (a.date ||
 app.post("/api/plan", (req, res) => { db.plan.push({ id: id(), title: String(req.body.title).slice(0, 120), date: req.body.date || "", done: false }); save(); res.json({ ok: 1 }); });
 app.patch("/api/plan/:id", (req, res) => { const p = db.plan.find((x) => x.id === req.params.id); if (p) p.done = !!req.body.done; save(); res.json({ ok: 1 }); });
 app.delete("/api/plan/:id", (req, res) => { db.plan = db.plan.filter((x) => x.id !== req.params.id); save(); res.json({ ok: 1 }); });
+
+// ---- photo capture: handwriting, slides, book pages ----
+app.post("/api/capture", upload.single("image"), wrap(async (req, res) => {
+  const f = req.file;
+  if (!f) throw new Error("No image received");
+  const mt = { ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" }[path.extname(f.filename)] || "image/jpeg";
+  const body = await claude(
+    "Transcribe all text in the image in reading order, describing any diagram or table briefly in square brackets. Then write clean English study notes from it, translating if the text is not English and keeping medical terms accurate. Use two parts headed 'Transcription' and 'Notes (English)'.",
+    [{ type: "image", source: { type: "base64", media_type: mt, data: fs.readFileSync(f.path).toString("base64") } }, { type: "text", text: "Process this page." }], 6000);
+  const m = { id: id(), courseId: req.body.courseId, type: "photo", title: req.body.title || "Photo notes", url: "", body, file: f.filename };
+  db.materials.push(m); save(); res.json(m);
+}));
+
+// ---- Anki import/export (tab-separated text, Anki's own text format) ----
+app.get("/api/anki/export", (req, res) => {
+  const c = db.courses.find((x) => x.id === req.query.courseId);
+  const clean = (t) => String(t).replace(/[\t\r\n]+/g, " ");
+  const rows = db.cards.filter((x) => !req.query.courseId || x.courseId === req.query.courseId)
+    .map((x) => [clean(x.front), clean(x.back), (c?.title || "asclepius").replace(/\s+/g, "_")].join("\t"));
+  res.set("Content-Disposition", 'attachment; filename="cards.txt"').type("text/plain")
+    .send(["#separator:tab", "#html:false", "#tags column:3", ...rows].join("\n"));
+});
+app.post("/api/anki/import", (req, res) => {
+  let n = 0;
+  String(req.body.text || "").split(/\r?\n/).forEach((l) => {
+    if (!l || l.startsWith("#")) return;
+    const p = l.split("\t");
+    if (p.length < 2) return;
+    const strip = (t) => t.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").trim();
+    db.cards.push({ id: id(), courseId: req.body.courseId, front: strip(p[0]), back: strip(p[1]), due: Date.now(), ease: 2.5, interval: 0 });
+    n++;
+  });
+  save(); res.json({ added: n });
+});
+
+// ---- search across everything, with citations ----
+const tokens = (t) => String(t).toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+app.post("/api/search", wrap(async (req, res) => {
+  const q = String(req.body.query || "").trim();
+  if (!q) throw new Error("Type a question first");
+  const kw = await claude("List 8 English search keywords and synonyms for this medical question, comma separated, nothing else.", q, 100).catch(() => "");
+  const terms = [...new Set(tokens(q + " " + kw))];
+  const passages = [];
+  db.materials.forEach((m) => {
+    if (req.body.courseId && m.courseId !== req.body.courseId) return;
+    const text = m.body || "";
+    for (let i = 0; i < text.length; i += 700) passages.push({ m, text: text.slice(i, i + 900) });
+  });
+  const df = {};
+  terms.forEach((t) => (df[t] = passages.filter((p) => p.text.toLowerCase().includes(t)).length));
+  const top = passages
+    .map((p) => { const l = p.text.toLowerCase(); return { ...p, s: terms.reduce((a, t) => a + (l.includes(t) ? 1 / Math.log(2 + df[t]) : 0), 0) }; })
+    .filter((p) => p.s > 0).sort((a, b) => b.s - a.s).slice(0, 8);
+  if (!top.length) return res.json({ answer: "Nothing in your materials matches that yet. Add notes or files on this topic first.", sources: [] });
+  const sources = top.map((p, i) => {
+    const c = db.courses.find((x) => x.id === p.m.courseId);
+    return { n: i + 1, title: p.m.title, courseId: p.m.courseId, course: c ? `Year ${c.year}, ${c.title}` : "", snippet: p.text };
+  });
+  const answer = await claude(
+    "Answer using ONLY the numbered passages. Cite each claim like [1] or [2][3]. If the passages do not answer the question, say so plainly.",
+    `Question: ${q}\n\n` + sources.map((s) => `[${s.n}] (${s.title}) ${s.snippet}`).join("\n\n"), 1500);
+  res.json({ answer, sources });
+}));
 
 app.listen(PORT, () => console.log(`Asclepius running at http://localhost:${PORT}`));
