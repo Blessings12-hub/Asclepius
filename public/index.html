@@ -45,28 +45,31 @@ $("#go").onclick=async()=>{try{await post("/api/login",{password:$("#pw").value}
 $("#pw").onkeydown=e=>{if(e.key==="Enter")$("#go").click()};
 async function init(){try{courses=await api("/api/courses")}catch{return}
  $("#login").hidden=true;$("#app").hidden=false;today()}
-function drawNav(){$("#nav").innerHTML=`<button class="c ${cur?"":"on"}" id="tdy"><b>Today</b></button>`+[1,2,3,4,5,6].map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
+function drawNav(){$("#nav").innerHTML=`<button class="c ${cur?"":"on"}" id="tdy"><b>Today</b></button><button class="c" id="srch"><b>Search</b></button>`+[1,2,3,4,5,6].map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
  courses.filter(c=>c.year===y).map(c=>`<button class="c ${cur&&cur.id===c.id?"on":""}" data-id="${c.id}">${esc(c.title)}</button>`).join("")}
  <button class="c muted" data-add="${y}">+ Add course</button></details>`).join("");
- $("#tdy").onclick=today;document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
+ $("#tdy").onclick=today;$("#srch").onclick=searchView;document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
  document.querySelectorAll("[data-add]").forEach(b=>b.onclick=async()=>{const t=prompt("Course name");if(t){await post("/api/courses",{year:b.dataset.add,title:t});courses=await api("/api/courses");drawNav()}})}
 async function open(id){cur=courses.find(c=>c.id===id);drawNav();$("#crumb").textContent=`Year ${cur.year}`;
  const mats=await api("/api/materials?courseId="+id);
  $("#main").innerHTML=`<h2>${esc(cur.title)}</h2>
- <div class="card"><h3>Add material</h3><div class="row"><select id="mt"><option value="note">Note / pasted text</option><option value="link">Web link (book, article)</option><option value="3d">3D lesson (embed link or .glb)</option><option value="file">File (PDF, slides, .txt)</option></select>
+ <div class="card"><h3>Add material</h3><div class="row"><select id="mt"><option value="note">Note / pasted text</option><option value="link">Web link (book, article)</option><option value="3d">3D lesson (embed link or .glb)</option><option value="photo">Photo of a page (handwriting, slides)</option><option value="file">File (PDF, slides, .txt)</option></select>
  <input id="ti" placeholder="Title"></div><input id="ur" placeholder="Link" hidden><textarea id="bd" placeholder="Paste text in any language"></textarea>
  <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
  <div id="list">${mats.map(card).join("")||'<p class="muted">No materials yet. Add your first one above.</p>'}</div>
  <div class="card"><h3>Study help</h3><div class="row tabs"><button data-m="chat" class="on">Ask</button><button data-m="guide">Study guide</button><button data-m="quiz">Quiz me</button><button data-m="cards">Flashcards</button><button data-m="ppt">Presentation</button></div>
  <textarea id="pr" placeholder="Ask a question, or name a topic"></textarea><div class="row"><button class="p" id="ai">Go</button><span id="st" class="muted"></span></div><pre id="out"></pre>
- <div class="row"><button id="dp" hidden>Download PowerPoint</button><button id="df" hidden>Download PDF</button></div></div>`;
+ <div class="row"><button id="dp" hidden>Download PowerPoint</button><button id="df" hidden>Download PDF</button></div>
+ <div class="row"><a href="/api/anki/export?courseId=${id}" download>Export cards for Anki</a><label class="muted">Import from Anki <input type="file" id="ai2" accept=".txt,.tsv,.csv"></label></div></div>`;
  let mode="chat";
- const mt=$("#mt");mt.onchange=()=>{$("#ur").hidden=!["link","3d"].includes(mt.value)};
+ const mt=$("#mt");mt.onchange=()=>{$("#fl").accept=mt.value==="photo"?"image/*":"";$("#ur").hidden=!["link","3d"].includes(mt.value)};
  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{mode=b.dataset.m;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
   $("#dp").hidden=$("#df").hidden=mode!=="ppt";$("#ai").hidden=mode==="ppt"});
+ $("#ai2").onchange=async e=>{try{const r=await post("/api/anki/import",{courseId:id,text:await e.target.files[0].text()});$("#out").textContent=`Imported ${r.added} cards. Review them under Today.`}catch(x){$("#out").textContent=x.message}};
  $("#sv").onclick=async()=>{$("#e1").textContent="Saving…";const f=new FormData();f.append("courseId",id);f.append("type",mt.value);f.append("title",$("#ti").value);
-  f.append("url",$("#ur").value);f.append("body",$("#bd").value);f.append("translate",$("#tr").checked?"1":"0");if($("#fl").files[0])f.append("file",$("#fl").files[0]);
-  try{await api("/api/materials",{method:"POST",body:f});open(id)}catch(e){$("#e1").textContent=e.message}};
+  f.append("url",$("#ur").value);f.append("body",$("#bd").value);f.append("translate",$("#tr").checked?"1":"0");const ph=$("#fl").files[0],pho=mt.value==="photo";if(pho&&!ph){$("#e1").textContent="Choose or take a photo first";return}
+  if(pho)f.append("image",await shrink(ph),"page.jpg");else if(ph)f.append("file",ph);
+  try{await api(pho?"/api/capture":"/api/materials",{method:"POST",body:f});open(id)}catch(e){$("#e1").textContent=e.message}};
  $("#ai").onclick=async()=>{$("#st").textContent="Thinking…";$("#out").textContent="";try{const pr=$("#pr").value;if(mode==="quiz")await runQuiz(id,pr);else if(mode==="cards")$("#out").textContent=`Added ${(await post("/api/cards/generate",{courseId:id,prompt:pr})).added} cards. Review them under Today.`;else $("#out").textContent=(await post("/api/ai",{courseId:id,mode,prompt:pr})).text}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
  for(const [btn,fmt] of [["#dp","pptx"],["#df","pdf"]])$(btn).onclick=async()=>{$("#st").textContent="Building…";try{
   const b=await api("/api/present",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({courseId:id,topic:$("#pr").value||cur.title,format:fmt})});
@@ -77,6 +80,13 @@ function card(m){let v="";
  else if(m.file)v=`<a href="/files/${m.file}" target="_blank">Open file</a>`;
  else if(m.url)v=`<a href="${esc(m.url)}" target="_blank" rel="noopener">Source</a>`;
  return `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(m.title)}</h3><button class="d" data-del="${m.id}">Delete</button></div>${v}${m.body?`<details><summary>Read</summary><pre>${esc(m.body)}</pre></details>`:""}</div>`}
+function shrink(file){return new Promise(r=>{const i=new Image();i.onload=()=>{const k=Math.min(1,1800/Math.max(i.width,i.height)),c=document.createElement("canvas");c.width=i.width*k;c.height=i.height*k;c.getContext("2d").drawImage(i,0,0,c.width,c.height);c.toBlob(r,"image/jpeg",.85)};i.src=URL.createObjectURL(file)})}
+function searchView(){cur=null;drawNav();$("#crumb").textContent="Search";
+ $("#main").innerHTML=`<h2>Search your materials</h2><div class="card"><input id="sq" placeholder="Ask anything, e.g. which nodes drain the breast?"><div class="row"><button class="p" id="sg">Search</button><span id="ss" class="muted"></span></div></div><div id="sr"></div>`;
+ const go=async()=>{$("#ss").textContent="Searching…";try{const r=await post("/api/search",{query:$("#sq").value});
+  $("#sr").innerHTML=`<div class="card"><pre>${esc(r.answer).replace(/\[(\d+)\]/g,"<sup>[$1]</sup>")}</pre></div>`+r.sources.map(s=>`<div class="card"><b>[${s.n}] ${esc(s.title)}</b> <span class="muted">${esc(s.course)}</span><p>${esc(s.snippet)}</p><button data-c="${s.courseId}">Open course</button></div>`).join("");
+  document.querySelectorAll("[data-c]").forEach(b=>b.onclick=()=>open(b.dataset.c))}catch(e){$("#sr").innerHTML=`<p class="err">${esc(e.message)}</p>`}$("#ss").textContent=""};
+ $("#sg").onclick=go;$("#sq").onkeydown=e=>{if(e.key==="Enter")go()}}
 async function runQuiz(id,topic){const qs=(await post("/api/quiz",{courseId:id,prompt:topic})).questions;let i=0;const box=$("#out");
  const show=()=>{if(i>=qs.length){box.textContent="Done. Your weakest topics show under Today.";return}const q=qs[i];
   box.innerHTML=`<b>${esc(q.q)}</b>`+q.options.map((o,k)=>`<div class="row"><button data-k="${k}" style="width:100%;text-align:left">${esc(o)}</button></div>`).join("")+`<div id="fb"></div>`;
