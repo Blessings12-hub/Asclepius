@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Asclepius</title>
+<link rel="manifest" href="/manifest.json"><meta name="theme-color" content="#14232B">
 <script type="module" src="https://cdnjs.cloudflare.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 <style>
 :root{--ink:#14232B;--paper:#EAF0EF;--card:#fff;--line:#C9D6D3;--acc:#1F7A5C;--bad:#B3261E}
@@ -43,11 +44,11 @@ function showLogin(){$("#app").hidden=true;$("#login").hidden=false}
 $("#go").onclick=async()=>{try{await post("/api/login",{password:$("#pw").value});init()}catch(e){$("#lerr").textContent=e.message}};
 $("#pw").onkeydown=e=>{if(e.key==="Enter")$("#go").click()};
 async function init(){try{courses=await api("/api/courses")}catch{return}
- $("#login").hidden=true;$("#app").hidden=false;drawNav()}
-function drawNav(){$("#nav").innerHTML=[1,2,3,4,5,6].map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
+ $("#login").hidden=true;$("#app").hidden=false;today()}
+function drawNav(){$("#nav").innerHTML=`<button class="c ${cur?"":"on"}" id="tdy"><b>Today</b></button>`+[1,2,3,4,5,6].map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
  courses.filter(c=>c.year===y).map(c=>`<button class="c ${cur&&cur.id===c.id?"on":""}" data-id="${c.id}">${esc(c.title)}</button>`).join("")}
  <button class="c muted" data-add="${y}">+ Add course</button></details>`).join("");
- document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
+ $("#tdy").onclick=today;document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
  document.querySelectorAll("[data-add]").forEach(b=>b.onclick=async()=>{const t=prompt("Course name");if(t){await post("/api/courses",{year:b.dataset.add,title:t});courses=await api("/api/courses");drawNav()}})}
 async function open(id){cur=courses.find(c=>c.id===id);drawNav();$("#crumb").textContent=`Year ${cur.year}`;
  const mats=await api("/api/materials?courseId="+id);
@@ -56,7 +57,7 @@ async function open(id){cur=courses.find(c=>c.id===id);drawNav();$("#crumb").tex
  <input id="ti" placeholder="Title"></div><input id="ur" placeholder="Link" hidden><textarea id="bd" placeholder="Paste text in any language"></textarea>
  <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
  <div id="list">${mats.map(card).join("")||'<p class="muted">No materials yet. Add your first one above.</p>'}</div>
- <div class="card"><h3>Study help</h3><div class="row tabs"><button data-m="chat" class="on">Ask</button><button data-m="guide">Study guide</button><button data-m="quiz">Quiz me</button><button data-m="ppt">Presentation</button></div>
+ <div class="card"><h3>Study help</h3><div class="row tabs"><button data-m="chat" class="on">Ask</button><button data-m="guide">Study guide</button><button data-m="quiz">Quiz me</button><button data-m="cards">Flashcards</button><button data-m="ppt">Presentation</button></div>
  <textarea id="pr" placeholder="Ask a question, or name a topic"></textarea><div class="row"><button class="p" id="ai">Go</button><span id="st" class="muted"></span></div><pre id="out"></pre>
  <div class="row"><button id="dp" hidden>Download PowerPoint</button><button id="df" hidden>Download PDF</button></div></div>`;
  let mode="chat";
@@ -66,15 +67,35 @@ async function open(id){cur=courses.find(c=>c.id===id);drawNav();$("#crumb").tex
  $("#sv").onclick=async()=>{$("#e1").textContent="Saving…";const f=new FormData();f.append("courseId",id);f.append("type",mt.value);f.append("title",$("#ti").value);
   f.append("url",$("#ur").value);f.append("body",$("#bd").value);f.append("translate",$("#tr").checked?"1":"0");if($("#fl").files[0])f.append("file",$("#fl").files[0]);
   try{await api("/api/materials",{method:"POST",body:f});open(id)}catch(e){$("#e1").textContent=e.message}};
- $("#ai").onclick=async()=>{$("#st").textContent="Thinking…";$("#out").textContent="";try{$("#out").textContent=(await post("/api/ai",{courseId:id,mode,prompt:$("#pr").value})).text}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
+ $("#ai").onclick=async()=>{$("#st").textContent="Thinking…";$("#out").textContent="";try{const pr=$("#pr").value;if(mode==="quiz")await runQuiz(id,pr);else if(mode==="cards")$("#out").textContent=`Added ${(await post("/api/cards/generate",{courseId:id,prompt:pr})).added} cards. Review them under Today.`;else $("#out").textContent=(await post("/api/ai",{courseId:id,mode,prompt:pr})).text}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
  for(const [btn,fmt] of [["#dp","pptx"],["#df","pdf"]])$(btn).onclick=async()=>{$("#st").textContent="Building…";try{
   const b=await api("/api/present",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({courseId:id,topic:$("#pr").value||cur.title,format:fmt})});
   const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=($("#pr").value||cur.title)+"."+fmt;a.click()}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this material?")){await api("/api/materials/"+b.dataset.del,{method:"DELETE"});open(id)}})}
 function card(m){let v="";
  if(m.type==="3d"){v=/\.(glb|gltf)$/i.test(m.file)?`<model-viewer src="/files/${m.file}" camera-controls auto-rotate></model-viewer>`:m.url?`<iframe src="${esc(m.url)}" allowfullscreen></iframe>`:""}
- else if(m.file&&!m.body)v=`<a href="/files/${m.file}" target="_blank">Open file</a>`;
+ else if(m.file)v=`<a href="/files/${m.file}" target="_blank">Open file</a>`;
  else if(m.url)v=`<a href="${esc(m.url)}" target="_blank" rel="noopener">Source</a>`;
  return `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(m.title)}</h3><button class="d" data-del="${m.id}">Delete</button></div>${v}${m.body?`<details><summary>Read</summary><pre>${esc(m.body)}</pre></details>`:""}</div>`}
+async function runQuiz(id,topic){const qs=(await post("/api/quiz",{courseId:id,prompt:topic})).questions;let i=0;const box=$("#out");
+ const show=()=>{if(i>=qs.length){box.textContent="Done. Your weakest topics show under Today.";return}const q=qs[i];
+  box.innerHTML=`<b>${esc(q.q)}</b>`+q.options.map((o,k)=>`<div class="row"><button data-k="${k}" style="width:100%;text-align:left">${esc(o)}</button></div>`).join("")+`<div id="fb"></div>`;
+  box.querySelectorAll("[data-k]").forEach(b=>b.onclick=()=>{const ok=+b.dataset.k===q.answer;b.style.background=ok?"#cfeadf":"#f3d3d0";
+   box.querySelectorAll("[data-k]").forEach(x=>x.disabled=true);$("#fb").innerHTML=`<p>${esc(q.why)}</p><button class="p" id="nx">Next</button>`;
+   post("/api/results",{courseId:id,topic:q.topic,correct:ok});$("#nx").onclick=()=>{i++;show()}})};show()}
+async function today(){cur=null;drawNav();$("#crumb").textContent="Today";
+ const [due,plan,stats]=await Promise.all([api("/api/cards/due"),api("/api/plan"),api("/api/stats")]);
+ $("#main").innerHTML=`<h2>Today</h2><div class="card"><h3>Flashcards due: ${due.length}</h3><div id="cd"></div></div>
+ <div class="card"><h3>Study plan</h3><div class="row"><input id="pt" placeholder="Task or exam" style="flex:1"><input id="pd" type="date" style="width:auto"><button class="p" id="pa">Add</button></div>${
+ plan.map(p=>`<div class="row"><input type="checkbox" data-pd="${p.id}" ${p.done?"checked":""}><span style="flex:1;${p.done?"text-decoration:line-through":""}">${esc(p.title)} <span class="muted">${esc(p.date)}</span></span><button class="d" data-px="${p.id}">Remove</button></div>`).join("")||'<p class="muted">Nothing planned yet.</p>'}</div>
+ <div class="card"><h3>Weakest topics</h3>${stats.map(s=>`<div>${esc(s.topic)} <span class="muted">${s.pct}% correct of ${s.n}</span></div>`).join("")||'<p class="muted">Take a quiz to see where you stand.</p>'}</div>`;
+ let k=0;const rv=()=>{const c=due[k];if(!c){$("#cd").innerHTML='<p class="muted">All caught up.</p>';return}
+  $("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p><button id="sa">Show answer</button>`;
+  $("#sa").onclick=()=>{$("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p><p>${esc(c.back)}</p><div class="row">${["Again","Hard","Good","Easy"].map((n,g)=>`<button data-g="${g}">${n}</button>`).join("")}</div>`;
+   document.querySelectorAll("[data-g]").forEach(b=>b.onclick=async()=>{await post(`/api/cards/${c.id}/review`,{grade:+b.dataset.g});k++;rv()})}};rv();
+ $("#pa").onclick=async()=>{if($("#pt").value){await post("/api/plan",{title:$("#pt").value,date:$("#pd").value});today()}};
+ document.querySelectorAll("[data-pd]").forEach(b=>b.onchange=async()=>{await api("/api/plan/"+b.dataset.pd,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({done:b.checked})});today()});
+ document.querySelectorAll("[data-px]").forEach(b=>b.onclick=async()=>{await api("/api/plan/"+b.dataset.px,{method:"DELETE"});today()})}
+if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js");
 init();
 </script></body></html>
