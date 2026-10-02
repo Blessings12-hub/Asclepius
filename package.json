@@ -1,0 +1,16 @@
+{
+  "name": "asclepius",
+  "version": "0.1.0",
+  "description": "Private study workspace for medical school: years 1-6, 3D lessons, auto-translation, AI study guides and presentations.",
+  "type": "module",
+  "private": true,
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "pdfkit": "^0.15.0",
+    "pptxgenjs": "^3.12.0"
+  }
+}
