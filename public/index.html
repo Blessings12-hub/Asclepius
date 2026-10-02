@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Asclepius</title>
+<script type="module" src="https://cdnjs.cloudflare.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+<style>
+:root{--ink:#14232B;--paper:#EAF0EF;--card:#fff;--line:#C9D6D3;--acc:#1F7A5C;--bad:#B3261E}
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,sans-serif;color:var(--ink);background:var(--paper)}
+h1,h2,h3{font-family:Georgia,serif;margin:.2em 0}
+header{padding:14px 18px;background:var(--ink);color:#fff;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:22px;letter-spacing:.02em}
+main{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 54px)}
+nav{border-right:1px solid var(--line);padding:12px;overflow:auto}
+nav details{margin-bottom:6px}nav summary{font-family:Georgia,serif;font-weight:700;cursor:pointer;padding:6px 0}
+nav button.c{display:block;width:100%;text-align:left;border:0;background:none;padding:7px 10px;border-radius:6px;cursor:pointer;font:inherit}
+nav button.c:hover,nav button.on{background:#d5e4e0}
+section{padding:18px;max-width:880px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:12px 0}
+input,select,textarea,button{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+textarea{width:100%;min-height:90px}input[type=text],input[type=url],input[type=password],input:not([type]){width:100%}
+button.p{background:var(--acc);color:#fff;border-color:var(--acc);cursor:pointer}button.d{color:var(--bad);cursor:pointer}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
+.tabs button{cursor:pointer}.tabs button.on{background:var(--ink);color:#fff}
+pre{white-space:pre-wrap;font:inherit}iframe,model-viewer{width:100%;height:340px;border:1px solid var(--line);border-radius:6px;background:#dfe9e6}
+.err{color:var(--bad)}.muted{color:#5a6d70}
+#login{max-width:340px;margin:12vh auto;padding:0 18px}
+@media(max-width:760px){main{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line);max-height:36vh}}
+</style></head><body>
+<div id="login" hidden><h1>Asclepius</h1><p class="muted">Private study workspace.</p>
+<input id="pw" type="password" placeholder="Password"><div class="row"><button class="p" id="go">Sign in</button></div><p class="err" id="lerr"></p></div>
+<div id="app" hidden>
+<header><h1>Asclepius</h1><span class="muted" id="crumb" style="color:#9fb7b1"></span></header>
+<main><nav id="nav"></nav><section id="main"><p class="muted">Pick a course on the left.</p></section></main></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let courses=[],cur=null;
+async function api(u,o={}){const r=await fetch(u,o);if(r.status===401&&u!=="/api/login"){showLogin();throw new Error("login")}
+ const ct=r.headers.get("content-type")||"";if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||"Something went wrong")}
+ return ct.includes("json")?r.json():r.blob()}
+const post=(u,b)=>api(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+function showLogin(){$("#app").hidden=true;$("#login").hidden=false}
+$("#go").onclick=async()=>{try{await post("/api/login",{password:$("#pw").value});init()}catch(e){$("#lerr").textContent=e.message}};
+$("#pw").onkeydown=e=>{if(e.key==="Enter")$("#go").click()};
+async function init(){try{courses=await api("/api/courses")}catch{return}
+ $("#login").hidden=true;$("#app").hidden=false;drawNav()}
+function drawNav(){$("#nav").innerHTML=[1,2,3,4,5,6].map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
+ courses.filter(c=>c.year===y).map(c=>`<button class="c ${cur&&cur.id===c.id?"on":""}" data-id="${c.id}">${esc(c.title)}</button>`).join("")}
+ <button class="c muted" data-add="${y}">+ Add course</button></details>`).join("");
+ document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
+ document.querySelectorAll("[data-add]").forEach(b=>b.onclick=async()=>{const t=prompt("Course name");if(t){await post("/api/courses",{year:b.dataset.add,title:t});courses=await api("/api/courses");drawNav()}})}
+async function open(id){cur=courses.find(c=>c.id===id);drawNav();$("#crumb").textContent=`Year ${cur.year}`;
+ const mats=await api("/api/materials?courseId="+id);
+ $("#main").innerHTML=`<h2>${esc(cur.title)}</h2>
+ <div class="card"><h3>Add material</h3><div class="row"><select id="mt"><option value="note">Note / pasted text</option><option value="link">Web link (book, article)</option><option value="3d">3D lesson (embed link or .glb)</option><option value="file">File (PDF, slides, .txt)</option></select>
+ <input id="ti" placeholder="Title"></div><input id="ur" placeholder="Link" hidden><textarea id="bd" placeholder="Paste text in any language"></textarea>
+ <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
+ <div id="list">${mats.map(card).join("")||'<p class="muted">No materials yet. Add your first one above.</p>'}</div>
+ <div class="card"><h3>Study help</h3><div class="row tabs"><button data-m="chat" class="on">Ask</button><button data-m="guide">Study guide</button><button data-m="quiz">Quiz me</button><button data-m="ppt">Presentation</button></div>
+ <textarea id="pr" placeholder="Ask a question, or name a topic"></textarea><div class="row"><button class="p" id="ai">Go</button><span id="st" class="muted"></span></div><pre id="out"></pre>
+ <div class="row"><button id="dp" hidden>Download PowerPoint</button><button id="df" hidden>Download PDF</button></div></div>`;
+ let mode="chat";
+ const mt=$("#mt");mt.onchange=()=>{$("#ur").hidden=!["link","3d"].includes(mt.value)};
+ document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{mode=b.dataset.m;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  $("#dp").hidden=$("#df").hidden=mode!=="ppt";$("#ai").hidden=mode==="ppt"});
+ $("#sv").onclick=async()=>{$("#e1").textContent="Saving…";const f=new FormData();f.append("courseId",id);f.append("type",mt.value);f.append("title",$("#ti").value);
+  f.append("url",$("#ur").value);f.append("body",$("#bd").value);f.append("translate",$("#tr").checked?"1":"0");if($("#fl").files[0])f.append("file",$("#fl").files[0]);
+  try{await api("/api/materials",{method:"POST",body:f});open(id)}catch(e){$("#e1").textContent=e.message}};
+ $("#ai").onclick=async()=>{$("#st").textContent="Thinking…";$("#out").textContent="";try{$("#out").textContent=(await post("/api/ai",{courseId:id,mode,prompt:$("#pr").value})).text}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
+ for(const [btn,fmt] of [["#dp","pptx"],["#df","pdf"]])$(btn).onclick=async()=>{$("#st").textContent="Building…";try{
+  const b=await api("/api/present",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({courseId:id,topic:$("#pr").value||cur.title,format:fmt})});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=($("#pr").value||cur.title)+"."+fmt;a.click()}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
+ document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this material?")){await api("/api/materials/"+b.dataset.del,{method:"DELETE"});open(id)}})}
+function card(m){let v="";
+ if(m.type==="3d"){v=/\.(glb|gltf)$/i.test(m.file)?`<model-viewer src="/files/${m.file}" camera-controls auto-rotate></model-viewer>`:m.url?`<iframe src="${esc(m.url)}" allowfullscreen></iframe>`:""}
+ else if(m.file&&!m.body)v=`<a href="/files/${m.file}" target="_blank">Open file</a>`;
+ else if(m.url)v=`<a href="${esc(m.url)}" target="_blank" rel="noopener">Source</a>`;
+ return `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(m.title)}</h3><button class="d" data-del="${m.id}">Delete</button></div>${v}${m.body?`<details><summary>Read</summary><pre>${esc(m.body)}</pre></details>`:""}</div>`}
+init();
+</script></body></html>
