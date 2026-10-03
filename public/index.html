@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Asclepius</title>
 <link rel="manifest" href="/manifest.json"><link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-48.png" sizes="48x48" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Asclepius"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" id="tc" content="#14232B">
 <script>try{var t=localStorage.getItem("asc_theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
@@ -67,9 +67,48 @@ table.ref td:first-child{font-weight:700}
  table.ref thead{display:none}table.ref tr{display:block;border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:6px;background:var(--card)}
  table.ref td{display:block;border:0;padding:3px 4px}table.ref td[data-label]::before{content:attr(data-label) ": ";color:var(--muted);font-size:13px;font-weight:400}
  table.ref td:first-child::before{content:""}}
+
+/* offline bar, toast, error box, badge, search hits */
+#offline{background:#8a5a00;color:#fff;text-align:center;font-size:14px;padding:6px 10px;padding-top:calc(6px + env(safe-area-inset-top))}
+#toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:92vw;background:var(--head);color:var(--headfg);border:1px solid var(--headmuted);padding:10px 14px;border-radius:10px;z-index:50;font-size:14px;box-shadow:0 4px 18px rgba(0,0,0,.3)}
+.errbox{text-align:center;padding:26px 16px}.errbox .logo{width:56px;height:56px;margin:0 auto 10px}.errbox h3{margin:6px 0}
+.badge{display:inline-block;min-width:1.5em;padding:0 6px;border-radius:99px;background:var(--acc);color:var(--accfg);font-size:12px;font-weight:700;text-align:center;margin-left:4px}
+mark{background:var(--sel);color:var(--ink);border-radius:3px;padding:0 2px}
+.hit{padding:10px 0;border-bottom:1px solid var(--line)}.hit:last-child{border-bottom:0}.hit h4{margin:0 0 2px}
+header{padding-top:calc(12px + env(safe-area-inset-top));padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
+#login{padding-top:env(safe-area-inset-top)}
+@media(max-width:760px){
+ input,select,textarea,button{font-size:16px}
+ button,select,input:not([type=checkbox]):not([type=radio]){min-height:42px}
+ header h1{font-size:19px}header{padding-bottom:10px}
+ section{padding:14px 12px 96px}
+ main{min-height:0}
+ nav{padding:10px 12px 0}
+ /* main sections become a swipeable tab bar fixed to the bottom, within thumb reach */
+ .prim{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin:0;
+  background:var(--head);padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-top:1px solid var(--headmuted)}
+ .prim::-webkit-scrollbar{display:none}
+ .prim button.c{flex:0 0 auto;width:auto;min-width:74px;max-width:96px;text-align:center;padding:6px 8px;min-height:44px;font-size:12px;line-height:1.2;color:var(--headfg);border:0;border-radius:10px;background:transparent}
+ .prim button.c b{font-weight:600}
+ .prim button.c.on{background:var(--acc);color:var(--accfg)}
+ #pt{flex:1 1 100%}
+ .prim .badge{background:var(--headfg);color:var(--head)}
+ .tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tile b{font-size:24px}
+ iframe,model-viewer{height:260px}
+ .card{padding:12px}
+ .bars{gap:3px}
+ .row{gap:6px}
+ .row>button{flex:1 1 auto}
+ pre,.card{overflow-wrap:anywhere}
+ table{display:block;overflow-x:auto}
+ #toast{bottom:calc(78px + env(safe-area-inset-bottom))}
+}
+@media(display-mode:standalone){body{-webkit-user-select:none;user-select:none}input,textarea,pre,p,.card{-webkit-user-select:text;user-select:text}}
 </style></head><body>
 <div id="login" hidden><img class="logo" src="/icon.svg" alt="Asclepius logo"><h1>Asclepius</h1><p class="muted">Private study workspace.</p>
 <input id="pw" type="password" placeholder="Password" autocomplete="current-password"><div class="row"><button class="p" id="go">Sign in</button></div><p class="err" id="lerr"></p></div>
+<div id="offline" hidden>You are offline. You can still read what you opened before, and reviews are saved to sync later.</div>
+<div id="toast" hidden></div>
 <div id="app" hidden>
 <header><h1><img class="logo" src="/icon.svg" alt="">Asclepius</h1><div class="hr"><span class="muted" id="crumb" style="color:var(--headmuted)"></span><button id="chip" hidden title="Open the focus timer"></button><button id="theme" title="Change light / dark mode"></button></div></header>
 <main><nav id="nav"></nav><section id="main"><p class="muted">Loading…</p></section></main></div>
@@ -86,8 +125,11 @@ let courses=[],cur=null,view="today",flash="";
 let settings={focusMin:25,shortMin:5,longMin:15,longEvery:4,dailyGoalMin:120};
 
 /* ---------- network ---------- */
-async function api(u,o={}){const r=await fetch(u,o);if(r.status===401&&u!=="/api/login"){showLogin();throw new Error("login")}
+const netErr=()=>Object.assign(new Error("You seem to be offline, or the server cannot be reached right now."),{net:1});
+async function api(u,o={}){let r;try{r=await fetch(u,o)}catch{throw netErr()}
+ if(r.status===401&&u!=="/api/login"){showLogin();throw new Error("login")}
  if(r.status===413)throw new Error("That is too large to send to the server in one go.");
+ if([502,503,504].includes(r.status)&&!(r.headers.get("content-type")||"").includes("json"))throw Object.assign(new Error("The server is busy or took too long. Wait a moment and try again."),{net:1});
  const ct=r.headers.get("content-type")||"";if(!r.ok){const j=ct.includes("json")?await r.json().catch(()=>({})):{};throw new Error(j.error||"Something went wrong ("+r.status+")")}
  return ct.includes("json")?r.json():r.blob()}
 const send=(m,u,b)=>api(u,{method:m,headers:{"content-type":"application/json"},body:JSON.stringify(b??{})});
@@ -147,35 +189,67 @@ function queueSession(seconds,when){let q=[];try{q=JSON.parse(localStorage.getIt
 let flushing=false;
 async function flushPending(){if(flushing)return;flushing=true;
  try{let q=[];try{q=JSON.parse(localStorage.getItem(PK))||[]}catch{}
-  while(q.length){try{await post("/api/sessions",q[0])}catch(e){if(e instanceof TypeError||e.message==="login")break;/* server refused it: drop it */}
+  while(q.length){try{await post("/api/sessions",q[0])}catch(e){if(e.net||e instanceof TypeError||e.message==="login")break;/* server refused it: drop it */}
    q.shift();try{localStorage.setItem(PK,JSON.stringify(q))}catch{}}
   if(view==="focus"&&$("#recent"))drawRecent()}finally{flushing=false}}
 addEventListener("online",flushPending);
 function tick(){if(T.running&&Date.now()>=T.endAt)timerComplete();
- const chip=$("#chip");if(idle()||T.dur==null){chip.hidden=true;document.title="Asclepius"}
+ const chip=$("#chip");if(idle()||T.dur==null){chip.hidden=true;document.title=(dueN?`(${dueN}) `:"")+"Asclepius"}
  else{chip.hidden=false;const t=mmss(left());chip.textContent=`${T.running?phaseName(T.phase):"Paused"} ${t}`;document.title=`${t} ${phaseName(T.phase)} · Asclepius`}
  const el=$("#tt");if(el){el.textContent=mmss(left());const b=$("#tbar");if(b)b.style.width=(100*(1-left()/T.dur)).toFixed(1)+"%"}}
 setInterval(tick,500);
 $("#chip").onclick=()=>go("focus");
 
+/* ---------- friendly errors, toast, offline bar ---------- */
+function errBox(e,retry){const off=e&&e.net;
+ return `<div class="card errbox"><img class="logo" src="/icon.svg" alt=""><h3>${off?"No connection":"Something went wrong"}</h3><p class="muted">${esc(e&&e.message||"Unknown problem")}</p>
+ ${off?'<p class="muted sm">Anything you opened before is still available while you are offline.</p>':""}<div class="row" style="justify-content:center"><button class="p" id="retry">Try again</button></div></div>`}
+function showErr(e,retry){$("#main").innerHTML=errBox(e);const b=$("#retry");if(b)b.onclick=retry||(()=>go(view in TITLES?view:"today"))}
+let toastT;function toast(m){const t=$("#toast");t.textContent=m;t.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>t.hidden=true,4500)}
+function setOnline(){$("#offline").hidden=navigator.onLine}
+addEventListener("online",()=>{setOnline();flushReviews();flushPending();refreshDue()});addEventListener("offline",setOnline);setOnline();
+addEventListener("unhandledrejection",ev=>{const m=ev.reason&&ev.reason.message;if(m&&m!=="login"&&!(ev.reason&&ev.reason.net)){toast(m);}});
+
+/* ---------- flashcard reviews saved offline, and the due-cards badge + reminders ---------- */
+const RQ="asc_review_queue";let dueN=0,rflushing=false;
+const rqGet=()=>{try{return JSON.parse(localStorage.getItem(RQ))||[]}catch{return[]}};
+const rqSet=q=>{try{localStorage.setItem(RQ,JSON.stringify(q))}catch{}};
+async function flushReviews(){if(rflushing)return;rflushing=true;
+ try{let q=rqGet();while(q.length){try{await post(`/api/cards/${q[0].id}/review`,q[0])}catch(e){if(e.net||e.message==="login")break;/* card gone or refused: drop it */}q.shift();rqSet(q)}}finally{rflushing=false}}
+function paintDue(){document.title=(dueN?`(${dueN}) `:"")+"Asclepius";try{if(navigator.setAppBadge)dueN?navigator.setAppBadge(dueN):navigator.clearAppBadge()}catch{}
+ const b=document.querySelector('[data-v="today"] b');if(b)b.innerHTML=TITLES.today+(dueN?` <span class="badge">${dueN}</span>`:"")}
+async function refreshDue(){try{await flushReviews();dueN=(await api("/api/cards/count")).due||0}catch{return}paintDue();checkReminder()}
+function checkReminder(){try{const t=settings.reminderTime;if(!t||!dueN)return;
+ const n=new Date(),now=pad(n.getHours())+":"+pad(n.getMinutes());if(now<t)return;
+ const k=localDay();if(localStorage.getItem("asc_rem_day")===k)return;localStorage.setItem("asc_rem_day",k);
+ notify("Time to review",`${dueN} flashcard${dueN===1?" is":"s are"} due. A few minutes keeps them fresh.`);toast(`${dueN} flashcards are due`)}catch{}}
+setInterval(()=>{if(!$("#app").hidden)refreshDue()},5*60e3);
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&!$("#app").hidden)refreshDue()});
+function icsFile(time){const[h,m]=time.split(":"),d=new Date(),p=n=>String(n).padStart(2,"0");
+ const st=`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}T${h}${m}00`,stamp=new Date().toISOString().replace(/[-:]|\.\d+/g,"");
+ const t=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Asclepius//Review reminder//EN","BEGIN:VEVENT","UID:asclepius-review@"+location.host,"DTSTAMP:"+stamp,"DTSTART:"+st,"DURATION:PT15M","RRULE:FREQ=DAILY",
+ "SUMMARY:Review flashcards (Asclepius)","DESCRIPTION:Open Asclepius and clear your due cards.","URL:"+location.origin,"BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:Review flashcards","TRIGGER:PT0M","END:VALARM","END:VEVENT","END:VCALENDAR"].join("\r\n");
+ const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([t],{type:"text/calendar"}));a.download="asclepius-review.ics";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
+
 /* ---------- navigation ---------- */
 const yrs=()=>Array.from({length:Math.max(5,...courses.map(c=>+c.year||1))},(_,i)=>i+1);
 const VIEWS={outline:()=>viewOutline(),today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
 const TITLES={today:"Today",outline:"Course outline",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
-function go(v){view=v;cur=null;drawNav();$("#crumb").textContent=TITLES[v];VIEWS[v]().catch(e=>{if(e.message!=="login")$("#main").innerHTML=`<p class="err">${esc(e.message)}</p>`})}
+function go(v){view=v;cur=null;drawNav();$("#crumb").textContent=TITLES[v];VIEWS[v]().catch(e=>{if(e.message!=="login")showErr(e,()=>go(v))})}
 async function init(){
  try{courses=await api("/api/courses")}catch(e){if(e.message!=="login"){$("#login").hidden=true;$("#app").hidden=false;$("#nav").innerHTML="";
-   $("#main").innerHTML=`<div class="card"><h3>Could not load your data</h3><p class="err">${esc(e.message)}</p><p class="muted">If you just deployed this, check the setup steps in the README, then reload.</p><button id="rl">Reload</button></div>`;$("#rl").onclick=()=>location.reload()}return}
+   showErr(e,()=>init());if(!e.net)$("#main").insertAdjacentHTML("beforeend",'<p class="muted sm center">If you just deployed this, check the setup steps in the README, then reload.</p>')}return}
  $("#login").hidden=true;$("#app").hidden=false;
  try{settings=await api("/api/settings")}catch{}
  if(T.dur==null||idle())resetPhase(T.phase==="focus"?"focus":T.phase);
- flushPending();post("/api/backup/auto").catch(()=>{});tick();go("today")}
+ flushPending();post("/api/backup/auto").catch(()=>{});tick();go("today");refreshDue()}
 function drawNav(){const items=Object.entries(TITLES);
- $("#nav").innerHTML=`<div class="prim">${items.map(([k,t])=>`<button class="c ${!cur&&view===k?"on":""}" data-v="${k}"><b>${t}</b></button>`).join("")}</div>
+ $("#nav").innerHTML=`<div class="prim">${items.map(([k,t])=>`<button class="c ${!cur&&view===k?"on":""}" data-v="${k}"><b>${t}${k==="today"&&dueN?` <span class="badge">${dueN}</span>`:""}</b></button>`).join("")}</div>
  <details ${wide()||cur?"open":""}><summary>Courses by year</summary>`+yrs().map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
  courses.filter(c=>c.year===y).map(c=>`<button class="c ${cur&&cur.id===c.id?"on":""}" data-id="${c.id}">${esc(c.title)}</button>`).join("")}
  <button class="c muted" data-add="${y}">+ Add course</button></details>`).join("")+`</details>`;
  document.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>go(b.dataset.v));
+ {const on=document.querySelector(".prim .c.on");if(on&&!wide())on.scrollIntoView({inline:"center",block:"nearest"})}
  document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
  document.querySelectorAll("[data-add]").forEach(b=>b.onclick=async()=>{const t=prompt("Course name");if(t){try{await post("/api/courses",{year:b.dataset.add,title:t});courses=await api("/api/courses");drawNav()}catch(e){alert(e.message)}}})}
 
@@ -266,10 +340,22 @@ async function runQuiz(id,topic){const qs=(await post("/api/quiz",{courseId:id,p
 
 /* ---------- search ---------- */
 async function viewSearch(){
- $("#main").innerHTML=`<h2>Search your materials</h2><div class="card"><input id="sq" placeholder="Ask anything, e.g. which nodes drain the breast?"><div class="row"><button class="p" id="sg">Search</button><span id="ss" class="muted"></span></div></div><div id="sr"></div>`;
- const go2=async()=>{$("#ss").textContent="Searching…";try{const r=await post("/api/search",{query:$("#sq").value});
-  $("#sr").innerHTML=`<div class="card"><pre>${esc(r.answer).replace(/\[(\d+)\]/g,"<sup>[$1]</sup>")}</pre></div>`+r.sources.map(s=>`<div class="card"><b>[${s.n}] ${esc(s.title)}</b> <span class="muted">${esc(s.course)}</span><p>${esc(s.snippet)}</p><button data-c="${s.courseId}">Open course</button></div>`).join("");
-  document.querySelectorAll("[data-c]").forEach(b=>b.onclick=()=>open(b.dataset.c))}catch(e){$("#sr").innerHTML=`<p class="err">${esc(e.message)}</p>`}$("#ss").textContent=""};
+ $("#main").innerHTML=`<h2>Search</h2><div class="card"><input id="sq" type="search" placeholder="Type to find notes, flashcards, courses, topics" autocomplete="off" enterkeyhint="search">
+ <div class="row"><button class="p" id="sg">Ask AI about my materials</button><span id="ss" class="muted"></span></div><p class="sm muted">Typing finds exact words instantly. The AI button answers a question from your notes and cites where it came from.</p></div><div id="sf"></div><div id="sr"></div>`;
+ const words=()=>$("#sq").value.trim().toLowerCase().split(/\s+/).filter(w=>w.length>1);
+ const hl=t=>{let h=esc(t);words().forEach(w=>{const e=w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&").replace(/[&<>"]/g,"");if(e)h=h.replace(new RegExp("("+e+")(?![^<]*>)","gi"),"<mark>$1</mark>")});return h};
+ let tm,seq=0;const find=async()=>{const q=$("#sq").value.trim();if(q.length<2){$("#sf").innerHTML="";return}const my=++seq;
+  try{const r=await api("/api/find?q="+encodeURIComponent(q));if(my!==seq)return;const n=r.materials.length+r.cards.length+r.courses.length+r.plan.length;
+   $("#sf").innerHTML=!n?`<p class="muted">No exact matches for "${esc(q)}". Try fewer words, or ask the AI.</p>`:
+   (r.materials.length?`<div class="card"><h3>Notes and files</h3>${r.materials.map(m=>`<div class="hit"><h4>${hl(m.title)}</h4><div class="sm muted">${esc(m.course)}</div><div class="sm">${hl(m.snippet)}</div><button data-c="${m.courseId}">Open course</button></div>`).join("")}</div>`:"")+
+   (r.cards.length?`<div class="card"><h3>Flashcards</h3>${r.cards.map(c=>`<div class="hit"><b>${hl(c.front)}</b><div class="sm">${hl(c.back)}</div><div class="sm muted">${esc(c.course)}</div></div>`).join("")}</div>`:"")+
+   (r.courses.length?`<div class="card"><h3>Courses and topics</h3>${r.courses.map(c=>`<div class="hit"><button class="lnk" data-c="${c.id}">Year ${c.year}: ${hl(c.title)}</button>${c.topics.length?`<div class="sm muted">${c.topics.map(hl).join(" · ")}</div>`:""}</div>`).join("")}</div>`:"")+
+   (r.plan.length?`<div class="card"><h3>Study plan</h3>${r.plan.map(p=>`<div class="hit">${hl(p.title)} <span class="muted sm">${esc(p.date||"")}${p.done?" · done":""}</span></div>`).join("")}</div>`:"");
+   document.querySelectorAll("#sf [data-c]").forEach(b=>b.onclick=()=>open(b.dataset.c))}catch(e){if(e.message!=="login")$("#sf").innerHTML=errBox(e);const rb=$("#retry");if(rb)rb.onclick=find}};
+ $("#sq").oninput=()=>{clearTimeout(tm);tm=setTimeout(find,250)};
+ const go2=async()=>{if(!$("#sq").value.trim())return;$("#ss").textContent="Asking…";try{const r=await post("/api/search",{query:$("#sq").value});
+  $("#sr").innerHTML=`<div class="card"><h3>AI answer</h3><pre>${esc(r.answer).replace(/\[(\d+)\]/g,"<sup>[$1]</sup>")}</pre></div>`+r.sources.map(s=>`<div class="card"><b>[${s.n}] ${esc(s.title)}</b> <span class="muted">${esc(s.course)}</span><p>${esc(s.snippet)}</p><button data-c="${s.courseId}">Open course</button></div>`).join("");
+  document.querySelectorAll("#sr [data-c]").forEach(b=>b.onclick=()=>open(b.dataset.c))}catch(e){$("#sr").innerHTML=`<p class="err">${esc(e.message)}</p>`}$("#ss").textContent=""};
  $("#sg").onclick=go2;$("#sq").onkeydown=e=>{if(e.key==="Enter")go2()}}
 
 /* ---------- today ---------- */
@@ -282,13 +368,20 @@ async function viewToday(){
  <div class="card"><h3>Flashcards due: ${due.length}</h3><div id="cd"></div></div>
  <div class="card"><h3>Study plan</h3><div class="row"><input id="pt" placeholder="Task or exam" style="flex:1"><input id="pd" type="date" style="width:auto"><button class="p" id="pa">Add</button></div>${
  plan.map(p=>`<div class="row"><input type="checkbox" data-pd="${p.id}" ${p.done?"checked":""}><span style="flex:1;${p.done?"text-decoration:line-through":""}">${esc(p.title)} <span class="muted">${esc(p.date)}</span></span><button class="d" data-px="${p.id}">Remove</button></div>`).join("")||'<p class="muted">Nothing planned yet.</p>'}</div>
+ <details class="card" id="remcard"><summary><b>Daily review reminder</b> <span class="muted sm">${settings.reminderTime?"at "+esc(settings.reminderTime):"off"}</span></summary>
+ <p class="sm muted">The app reminds you when it is open and cards are due. For a reminder even when the app is closed, add it to your phone's calendar once.</p>
+ <div class="row"><input id="rt" type="time" value="${esc(settings.reminderTime||"19:00")}" style="width:auto"><button class="p" id="rts">Save time</button><button id="rto">Turn off</button><button id="rti">Add to my calendar</button></div><p class="sm" id="rtm"></p></details>
  <div class="card"><h3>Weakest topics</h3>${stats.map(s=>`<div>${esc(s.topic)} <span class="muted">${s.pct}% correct of ${s.n}</span></div>`).join("")||'<p class="muted">Take a quiz to see where you stand.</p>'}</div>`;
  document.querySelectorAll(".tile[data-v]").forEach(b=>b.onclick=()=>go(b.dataset.v));
+ const saveRem=async t=>{try{settings=await send("PUT","/api/settings",{reminderTime:t});$("#rtm").textContent=t?"Saved. Reminder at "+t+".":"Reminder turned off.";
+   if(t&&"Notification"in window&&Notification.permission==="default")Notification.requestPermission();checkReminder()}catch(e){$("#rtm").textContent=e.message}};
+ $("#rts").onclick=()=>saveRem($("#rt").value);$("#rto").onclick=()=>saveRem("");$("#rti").onclick=()=>icsFile($("#rt").value||"19:00");
  let k=0;const rv=()=>{const c=due[k];if(!c){$("#cd").innerHTML='<p class="muted">All caught up.</p>';return}
   $("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p><button id="sa">Show answer</button>`;
   $("#sa").onclick=()=>{$("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p><p>${esc(c.back)}</p><div class="row">${["Again","Hard","Good","Easy"].map((n,g)=>`<button data-g="${g}">${n}</button>`).join("")}</div>`;
    document.querySelectorAll("[data-g]").forEach(b=>b.onclick=async()=>{document.querySelectorAll("[data-g]").forEach(x=>x.disabled=true);
-    try{await post(`/api/cards/${c.id}/review`,{grade:+b.dataset.g,day:localDay()})}catch(e){$("#cd").innerHTML=`<p class="err">${esc(e.message)}</p>`;return}k++;rv()})}};rv();
+    const body={id:c.id,grade:+b.dataset.g,day:localDay(),rid:"r"+Date.now()+Math.random().toString(36).slice(2,6)};
+    try{await post(`/api/cards/${c.id}/review`,body)}catch(e){if(e.net){rqSet([...rqGet(),body]);toast("Offline. Saved, it will sync when you are back online.")}else{$("#cd").innerHTML=`<p class="err">${esc(e.message)}</p>`;return}}k++;dueN=Math.max(0,dueN-1);paintDue();rv()})}};rv();
  $("#pa").onclick=async()=>{if($("#pt").value){await post("/api/plan",{title:$("#pt").value,date:$("#pd").value});viewToday()}};
  document.querySelectorAll("[data-pd]").forEach(b=>b.onchange=async()=>{await send("PATCH","/api/plan/"+b.dataset.pd,{done:b.checked});viewToday()});
  document.querySelectorAll("[data-px]").forEach(b=>b.onclick=async()=>{await api("/api/plan/"+b.dataset.px,{method:"DELETE"});viewToday()})}
@@ -399,7 +492,7 @@ function drawForm(){const k=refTab,R=REF[k],box=$("#rform");if(!refEdit){box.inn
 
 /* ---------- backup and sync ---------- */
 const KINDS={auto:"Automatic","manual":"Manual","pre-restore":"Before a restore"};
-async function viewBackup(){
+async function viewBackup0(){
  const [bk,h]=await Promise.all([api("/api/backup"),api("/api/health")]);
  const cloudy=bk.storage==="cloud";let lastDl=0;try{lastDl=+localStorage.getItem("asc_lastdl")||0}catch{}
  const checks=[
@@ -429,6 +522,10 @@ async function viewBackup(){
  document.querySelectorAll("[data-d]").forEach(b=>b.onclick=async()=>{try{await download("/api/backup/download?id="+b.dataset.d,"asclepius-backup.json")}catch(x){msg(x.message,1)}});
  document.querySelectorAll("[data-x]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this backup?")){await api("/api/backup/"+b.dataset.x,{method:"DELETE"});viewBackup()}})}
 
+async function viewBackup(){await viewBackup0();
+ $("#main").insertAdjacentHTML("beforeend",'<div class="card"><h3>Security</h3><p class="sm muted">Sign out on this device. Use this on a shared phone or computer. It also clears the copy kept for offline use.</p><button id="so">Sign out</button></div>');
+ $("#so").onclick=async()=>{try{await post("/api/logout")}catch{}try{const ks=await caches.keys();await Promise.all(ks.filter(k=>/data/.test(k)).map(k=>caches.delete(k)))}catch{}
+  try{localStorage.removeItem(RQ)}catch{}dueN=0;paintDue();$("#pw").value="";showLogin()}}
 if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js");
 init();
 </script></body></html>
