@@ -5,13 +5,13 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import PptxGenJS from "pptxgenjs";
-import PDFDocument from "pdfkit/js/pdfkit.standalone.js"; // fonts are built into this file, so PDF export also works on Vercel
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import { kv, docs, files, backups, cloud, mode, ready, onVercel, UPLOAD_DIR } from "./lib/store.js";
 import { seedCourses, seedRefs, courseId } from "./lib/seed.js";
 import { makeBackup, backupIfStale, listBackups, snapshot, restore } from "./lib/backup.js";
 import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
+import { research, referenceText, findPictures, fetchImage, pool } from "./lib/media.js";
+import { THEMES, tidy, normalizeDeck, chosen, buildPptx, buildSlidePdf, normalizeGuide, buildGuidePdf } from "./lib/deck.js";
 
 const { PASSWORD, SECRET = "change-me", OWNER = "Student", PORT = 3000, CRON_SECRET } = process.env;
 if (!onVercel && !cloud) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -284,76 +284,90 @@ app.post("/api/translate", wrap(async (req, res) => {
 }));
 
 // ---- study help ----
+const courseLabel = (c) => (c ? `Year ${c.year} · ${c.title}` : "");
+const CHAT_RULES = "Reply in clean Markdown that reads well on a phone: start with a direct one or two sentence answer, then short sections with ## headings and bullet points, **bold** for key terms, and a small table when comparing things. Be concise. No emojis, no filler, no 'great question'.";
+const GUIDE_RULES = `Return ONLY a JSON object for a medical student's study guide, in exactly this shape:
+{"title":string,"overview":"2-3 sentences: what this is and why it matters","sections":[{"heading":string,"points":["Term: short clear explanation", ...4-8 items],"mnemonic":"optional memory aid or empty string"}],"high_yield":["5-8 exam-ready facts"],"pitfalls":["3-6 common mistakes or confusions"],"questions":[{"q":string,"a":string}]}
+Use 4-7 sections that follow a logical order (definition, mechanism or anatomy, clinical features, investigations, management, complications). Give 8-10 practice questions with short answers. Every string is plain text: no markdown symbols, no asterisks, no numbering, no emojis. Where it fits, begin a point with a short term and a colon.`;
 app.post("/api/ai", wrap(async (req, res) => {
   const { courseId, mode: m, prompt = "" } = req.body;
   const course = (await getCourses()).find((c) => c.id === courseId);
+  const mats = await context(courseId);
+  const who = `You are a study tutor for a medical student. Course: ${course?.title}.`;
+  const own = "Prefer the student's own materials when relevant, and say when something is not in them. Flag anything uncertain.";
+  if (m === "guide") {
+    const topic = String(prompt).trim() || course?.title || "";
+    const refs = await research(topic, 3);
+    const sys = `${who} ${GUIDE_RULES} ${own} Use the REFERENCE text (public encyclopedia extracts) only to fill gaps, never to contradict the student's materials; add "(check textbook)" after anything you are unsure of.\n\nMATERIALS:\n${mats}\n\nREFERENCE:\n${referenceText(refs)}`;
+    const raw = await claude(sys, `Topic: ${topic || "the whole course"}`, 5000, { json: true });
+    let g = null;
+    try { g = normalizeGuide(parseJSON(raw), topic); } catch {}
+    if (!g || !g.sections.length) return res.json({ text: tidy(raw, 20000) });
+    g.sources = refs.map((r) => ({ title: r.title + " (Wikipedia)", url: r.url }));
+    return res.json({ guide: g, course: courseLabel(course) });
+  }
   const modes = {
-    chat: "Answer the question clearly and accurately for a medical student.",
-    guide: "Write a structured study guide: key concepts, mechanisms, high-yield facts, common exam pitfalls, and 10 practice questions with answers.",
-    quiz: "Write 10 exam-style multiple choice questions with 5 options, correct answers and short explanations.",
+    chat: `Answer the question clearly and accurately for a medical student. ${CHAT_RULES}`,
+    quiz: "Write 10 exam-style multiple choice questions with 5 options, correct answers and short explanations, in clean Markdown.",
   };
-  const sys = `You are a study tutor for a medical student. Course: ${course?.title}. ${modes[m] || modes.chat} Prefer the student's own materials below when relevant, and say when something is not in them. Flag anything uncertain.\n\nMATERIALS:\n${await context(courseId)}`;
-  res.json({ text: await claude(sys, prompt || "Make it for the whole course.") });
+  const sys = `${who} ${modes[m] || modes.chat} ${own}\n\nMATERIALS:\n${mats}`;
+  res.json({ text: await claude(sys, prompt || "Give an overview of the whole course.") });
+}));
+app.post("/api/guide/pdf", wrap(async (req, res) => {
+  const g = normalizeGuide(req.body.guide, "Study guide");
+  if (!g.sections.length) throw bad("There is no study guide to download yet");
+  const course = (await getCourses()).find((c) => c.id === req.body.courseId);
+  try { res.type("pdf").send(await buildGuidePdf(g, { owner: OWNER, course: courseLabel(course) })); }
+  catch (e) { throw /ENOENT|\.afm/i.test(e.message) ? new Error("PDF export is not working on this server (font files missing).") : e; }
 }));
 
 // ---- presentations (PowerPoint + PDF) ----
-const UA = { "user-agent": "Asclepius/0.2 (personal study app)" };
-async function wikiImage(q) {
-  try {
-    const u = "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6&gsrlimit=6&prop=imageinfo&iiprop=url|extmetadata&iiurlwidth=900&gsrsearch=" + encodeURIComponent(q + " filetype:bitmap");
-    const j = await (await fetch(u, { headers: UA })).json();
-    for (const p of Object.values(j.query?.pages || {})) {
-      const i = p.imageinfo?.[0];
-      if (i && /\.(jpe?g|png)$/i.test(i.thumburl || "")) {
-        const b = Buffer.from(await (await fetch(i.thumburl, { headers: UA })).arrayBuffer());
-        const lic = i.extmetadata?.LicenseShortName?.value || "see source";
-        return { b, png: /\.png$/i.test(i.thumburl), credit: `Image: ${p.title.replace("File:", "")}, Wikimedia Commons, ${lic}` };
-      }
-    }
-  } catch {}
-  return null;
-}
-app.post("/api/present", wrap(async (req, res) => {
-  const { courseId, topic, format } = req.body;
-  const raw = await claude(
-    'Return ONLY JSON: an array of 8-12 slides, each {"title":string,"bullets":[3-5 short strings],"notes":string,"image":"2-4 word search query for a real diagram or photo"}. Plain, natural student-written wording. No markdown, no mention of AI.',
-    `Topic: ${topic}\n\nMy materials:\n${(await context(courseId)).slice(0, Math.min(ctxChars, 20000))}`, 6000);
-  const slides = JSON.parse(raw.replace(/```json|```/g, "").trim());
-  const imgs = await Promise.all(slides.map((s) => wikiImage(s.image || s.title)));
-  if (format === "pdf") {
-    let out;
-    try {
-      const doc = new PDFDocument({ layout: "landscape", size: "A4", info: { Title: topic, Author: OWNER, Producer: "", Creator: "" } });
-      const chunks = []; doc.on("data", (c) => chunks.push(c));
-      slides.forEach((s, i) => {
-        if (i) doc.addPage();
-        const m = imgs[i];
-        doc.fontSize(30).fillColor("#14232B").text(s.title, 60, 50, { width: 720 });
-        doc.fontSize(20).list(s.bullets, 60, 120, { width: m ? 400 : 720, bulletRadius: 3, textIndent: 16, bulletIndent: 8 });
-        if (m) { doc.image(m.b.buffer.slice(m.b.byteOffset, m.b.byteOffset + m.b.byteLength), 490, 120, { fit: [300, 280] }); doc.fontSize(8).fillColor("#5a6d70").text(m.credit, 490, 410, { width: 300 }); }
-      });
-      doc.end(); await new Promise((r) => doc.on("end", r));
-      out = Buffer.concat(chunks);
-    } catch (e) {
-      if (/ENOENT|\.afm/i.test(e.message)) throw new Error("PDF export is not working on this server (font files missing). Use PowerPoint instead.");
-      throw e;
-    }
-    res.type("pdf").send(out);
-  } else {
-    const p = new PptxGenJS();
-    p.author = OWNER; p.company = ""; p.title = topic; p.layout = "LAYOUT_WIDE";
-    slides.forEach((s, i) => {
-      const sl = p.addSlide(), m = imgs[i];
-      sl.addText(s.title, { x: 0.6, y: 0.4, w: 12, h: 1, fontSize: 32, bold: true, color: "14232B" });
-      sl.addText(s.bullets.map((b) => ({ text: b, options: { bullet: true, breakLine: true } })), { x: 0.8, y: 1.6, w: m ? 7 : 11.5, h: 5, fontSize: 22, color: "14232B", valign: "top" });
-      if (m) {
-        sl.addImage({ data: `image/${m.png ? "png" : "jpeg"};base64,${m.b.toString("base64")}`, x: 8.2, y: 1.6, w: 4.5, h: 3.6, sizing: { type: "contain", w: 4.5, h: 3.6 } });
-        sl.addText(m.credit, { x: 8.2, y: 5.3, w: 4.5, h: 0.5, fontSize: 8, color: "5A6D70" });
-      }
-      sl.addNotes(s.notes || "");
-    });
-    res.type("application/vnd.openxmlformats-officedocument.presentationml.presentation").send(await p.write({ outputType: "nodebuffer" }));
+// Step 1 (/api/deck): research the topic, write the slides, find several picture choices per slide. Returns JSON for a preview.
+// Step 2 (/api/deck/export): the student's final choices come back and become a PowerPoint or PDF.
+const DECK_RULES = (n) => `You are an expert medical educator building a polished lecture deck for a medical student. Return ONLY a JSON object:
+{"title":"short specific title","subtitle":"one line","cover":{"image":"2-4 word search query for a real photo or diagram that suits the whole topic"},"slides":[...]}
+Make exactly ${n} slides in "slides", the last one being the summary (the title slide, outline and sources are added automatically). Each slide: {"layout":"bullets"|"steps"|"compare"|"facts"|"summary","kicker":"section label, 1-3 words","title":"max 8 words","notes":"2-4 sentences the presenter can say", ...fields below}
+- bullets: "bullets" (3-5 items, each under 22 words, start key ones with a short term and a colon like "Preload: ..."), "image" (2-4 word search query for a real labelled diagram, anatomy picture, histology slide, scan, ECG or clinical photo), "image2" (a different, broader query).
+- steps: "steps":[{"head":"2-4 words","text":"one sentence"}] with 3-5 items (pathways, stages, algorithms).
+- compare: "left":{"head":string,"bullets":[3-4 items]},"right":{"head":string,"bullets":[3-4 items]}.
+- facts: "facts":[{"value":"short value such as 60-100 bpm","label":"what it is"}] with 3-4 items, plus optional "bullets" (max 3).
+- summary: "title":"Key takeaways","bullets":[4-6 exam-ready points].
+Follow a teaching order: why it matters, mechanism or anatomy, clinical features, investigations, management, complications, summary. At least 70% of slides should be "bullets" with image queries; use steps, compare and facts only where they really fit, each at most twice.
+Plain, natural wording like good student slides. Text only: no markdown symbols, no emojis, no mention of AI. Use the student's materials first and the REFERENCE text to fill gaps. Never invent numbers; leave out anything you are unsure of.`;
+app.post("/api/deck", wrap(async (req, res) => {
+  const { courseId } = req.body;
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  const topic = tidy(req.body.topic || course?.title, 100);
+  if (!topic) throw bad("Type a topic first");
+  const n = Math.min(16, Math.max(6, +req.body.slides || 12));
+  const [refs, mats] = await Promise.all([research(topic, 4), context(courseId)]);
+  const raw = await claude(DECK_RULES(n),
+    `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDENT MATERIALS:\n${mats.slice(0, Math.min(ctxChars, 14000))}\n\nREFERENCE:\n${referenceText(refs)}`, 7000, { json: true });
+  const deck = normalizeDeck({ ...parseJSON(raw), course: courseLabel(course), sources: refs.map((r) => ({ title: r.title + " (Wikipedia)", url: r.url })) }, topic);
+  if (deck.slides.length < 3) throw new Error("The AI did not return enough slides. Please try again.");
+  // search the web for pictures: several candidates per slide so the student can swap them
+  const jobs = [{ o: deck.cover, qs: [deck.cover.image, topic] }, ...deck.slides.filter((s) => s.layout === "bullets").map((s) => ({ o: s, qs: [s.image, s.image2, `${topic} ${s.title}`] }))];
+  await pool(jobs, 5, async (j) => { j.o.cands = await findPictures(j.qs, 4); }, Date.now() + 26000);
+  const used = new Set();
+  for (const o of [deck.cover, ...deck.slides]) {
+    o.pick = o.cands.findIndex((c) => !used.has(c.url)); // different picture on every slide
+    if (o.pick >= 0) used.add(o.cands[o.pick].url);
   }
+  res.json({ deck, themes: Object.fromEntries(Object.entries(THEMES).map(([k, v]) => [k, v.label])) });
+}));
+app.post("/api/deck/export", wrap(async (req, res) => {
+  const deck = normalizeDeck(req.body.deck, req.body.deck?.topic);
+  const fmt = req.body.format === "pdf" ? "pdf" : "pptx", tk = THEMES[req.body.theme] ? req.body.theme : "clinical";
+  const imgs = new Map(); let total = 0;
+  await pool([deck.cover, ...deck.slides].map(chosen).filter(Boolean), 6, async (c) => {
+    const im = await fetchImage(c.url);
+    if (im && total + im.b.length <= 3400000) { total += im.b.length; imgs.set(c.url, im); } // keep the file under Vercel's ~4.5 MB response limit
+  }, Date.now() + 25000);
+  let out;
+  try { out = fmt === "pdf" ? await buildSlidePdf(deck, imgs, tk, OWNER) : await buildPptx(deck, imgs, tk, OWNER); }
+  catch (e) { throw /ENOENT|\.afm/i.test(e.message) ? new Error("PDF export is not working on this server (font files missing). Use PowerPoint instead.") : e; }
+  res.set("X-Pictures", String(imgs.size));
+  res.type(fmt === "pdf" ? "pdf" : "application/vnd.openxmlformats-officedocument.presentationml.presentation").send(out);
 }));
 
 // ---- flashcards (spaced repetition) ----

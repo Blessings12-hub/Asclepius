@@ -9,11 +9,17 @@ A private study workspace for medical school. Single user.
 - Translate to English: paste text or a link in any language, or tick the box when saving a material
 - Study help: ask questions, make study guides and quizzes from your own materials
 - Flashcards with spaced repetition, interactive quizzes that track your weak topics, and a study planner (all under Today)
-- Presentations: PowerPoint or PDF built from your topic and materials, with diagrams from Wikimedia Commons (credit printed on each slide)
+- Presentations: researched from the web and your materials, with pictures from Wikimedia Commons, Wikipedia and Openverse. Preview every slide, swap or remove pictures, pick a style, then download PowerPoint, PDF or both (picture credits are printed on each slide and on a sources slide)
 - Photo capture: snap handwriting, slides or book pages; they become translated, searchable notes
 - Anki: export and import cards as Anki text files
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
+
+New in 0.5:
+
+- **Study help is easier to read**: answers show as headings, bullets, tables and bold key terms instead of one long text. Study guides are split into collapsible sections with a high-yield box, common pitfalls and tap-to-reveal practice questions. Download a guide as a PDF, save it to your notes, copy it, or turn it into flashcards
+- **Better presentations**: topic research from Wikipedia, several picture choices per slide, three styles, title, outline, steps, comparison, key-number and summary slides, and speaker notes
+- **Better PDFs**: the slide PDF matches the PowerPoint design, and medical symbols such as arrows, Greek letters and subscripts are converted so they print correctly
 
 New in 0.4:
 
@@ -89,7 +95,8 @@ The app uses Google Gemini or Groq, both of which have free tiers that I believe
 
 - Only add 3D and course content you have the right to use (open-access sources, your university's licensed material, your own files).
 - PDFs with real text are read automatically. Scanned (image-only) PDFs are not; paste their text into a note. A PDF whose text cannot be read is still saved and can be opened.
-- Slide images are found by search, so check each one fits the slide. Keep the credit line.
+- Slide pictures are found by search, so check each one in the preview. Keep the credit lines. Wikipedia text is used only as background reading; check facts against your textbooks.
+- Building a presentation takes 20-60 seconds (research, writing, picture search). On Vercel the function limit is 60 seconds, so choose 8-12 slides if a build ever times out.
 - Presentations carry your name (`OWNER`) in the file properties. Check your school's AI policy for graded work.
 - The drug and lab tables are for study. The starter rows come from general textbook knowledge, contain no doses, and have not been checked against any particular formulary or laboratory. Normal ranges differ between labs and countries. Check against your own textbooks and local guidelines, and edit freely.
 - Offline mode needs HTTPS (or localhost) to install.
