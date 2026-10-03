@@ -4,6 +4,7 @@ import multer from "multer";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import PptxGenJS from "pptxgenjs";
 import PDFDocument from "pdfkit";
 import pdf from "pdf-parse/lib/pdf-parse.js";
@@ -595,7 +596,9 @@ app.post("/api/backup/restore", wrap(async (req, res) => {
 app.delete("/api/backup/:id", wrap(async (req, res) => { await backups.del(bkId(req.params.id)); res.json({ ok: 1 }); }));
 
 // ---- static app shell (on Vercel the public/ folder is served by the CDN instead) ----
-app.use(express.static("public"));
+const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
+app.use(express.static(PUBLIC_DIR));
+app.get("/", (req, res) => res.sendFile("index.html", { root: PUBLIC_DIR }));
 
 // JSON errors instead of HTML error pages
 app.use((err, req, res, next) => {

@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "server.js": { "includeFiles": "public/**" }
+  },
   "crons": [
     { "path": "/api/cron/backup", "schedule": "0 2 * * *" }
   ]
