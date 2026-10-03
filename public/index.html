@@ -104,6 +104,21 @@ header{padding-top:calc(12px + env(safe-area-inset-top));padding-left:max(18px,e
  #toast{bottom:calc(78px + env(safe-area-inset-bottom))}
 }
 @media(display-mode:standalone){body{-webkit-user-select:none;user-select:none}input,textarea,pre,p,.card{-webkit-user-select:text;user-select:text}}
+/* study help: tidy answers, study guide, presentation preview */
+.md p{margin:.45em 0}.md ul,.md ol{margin:.3em 0 .7em;padding-left:1.3em}.md li{margin:.28em 0}.md li.sub{margin-left:1.2em;list-style:circle}
+.md h4.mh{font-family:Georgia,serif;margin:1em 0 .3em;font-size:16px}.md h4.mh.big{font-size:18px;border-bottom:2px solid var(--acc);padding-bottom:3px}
+.md code{background:var(--sel);padding:1px 5px;border-radius:4px;font-size:.92em}.md blockquote{margin:.6em 0;padding:6px 12px;border-left:4px solid var(--acc);background:var(--sel);border-radius:0 6px 6px 0}
+.md hr{border:0;border-top:1px solid var(--line);margin:1em 0}.tw{overflow-x:auto}.md b{font-weight:700}.md sup{color:var(--acc);font-weight:700}
+.sgh{background:var(--head);color:var(--headfg);border-radius:10px;padding:14px 16px;margin:6px 0 10px;border-bottom:4px solid var(--acc)}.sgh h3{color:var(--headfg);margin:0 0 4px;font-size:21px}.sgh p{margin:0;opacity:.92}
+.sgs{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:0 14px}
+.sgs>summary{font-family:Georgia,serif;font-weight:700;font-size:17px;padding:11px 0 11px 10px;margin-left:-14px;padding-left:24px;cursor:pointer;border-left:4px solid var(--acc)}
+.pts{margin:.2em 0 .8em;padding-left:1.2em}.pts li{margin:.4em 0}.pts b{color:var(--acc)}.mn{font-style:italic;color:var(--acc);margin:0 0 10px}
+.co{border-radius:8px;padding:10px 14px;margin:10px 0;border-left:5px solid}.co h4{margin:0 0 2px;font-family:Georgia,serif;font-size:16px}.hy{background:var(--okbg);border-color:var(--acc)}.pf{background:var(--badbg);border-color:var(--bad)}.co .pts b{color:inherit}
+.sgq h4{font-family:Georgia,serif;font-size:17px;margin:14px 0 2px}.sgq details{border-bottom:1px solid var(--line);padding:8px 0}.sgq summary{cursor:pointer}.sgq details p{margin:.5em 0 .2em 1.4em;color:var(--muted)}
+.acts button{font-size:14px}.dk h3{font-size:19px}.ds{display:flex;gap:12px;border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;background:var(--card)}
+.ds img,.ds .ph{width:132px;height:92px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;flex:none}.ds .ph{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;background:var(--viewer)}
+.ds ul{margin:.3em 0;padding-left:1.1em;font-size:14px}.ds .cr{font-size:11px;color:var(--muted);margin-top:4px}.ds>div{min-width:0;flex:1}
+@media(max-width:760px){.ds{flex-direction:column}.ds img,.ds .ph{width:100%;height:150px}}
 </style></head><body>
 <div id="login" hidden><img class="logo" src="/icon.svg" alt="Asclepius logo"><h1>Asclepius</h1><p class="muted">Private study workspace.</p>
 <input id="pw" type="password" placeholder="Password" autocomplete="current-password"><div class="row"><button class="p" id="go">Sign in</button></div><p class="err" id="lerr"></p></div>
@@ -289,6 +304,61 @@ function putFile(url,file,type,onp){return new Promise((res,rej)=>{const x=new X
 async function uploadFile(file,onp){const i=await post("/api/upload-url",{filename:file.name,size:file.size});
  if(i.mode!=="cloud")return null;await putFile(i.uploadUrl,file,i.contentType,onp);return{fileKey:i.key,fileName:file.name}}
 
+/* ---------- tidy display of AI answers ---------- */
+const inl=s=>esc(s).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/(^|[\s(])\*([^\s*][^*]*?)\*(?=[\s).,;:!?]|$)/g,"$1<i>$2</i>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\[(\d+)\]/g,"<sup>[$1]</sup>");
+function md(src){const L=String(src||"").replace(/\r/g,"").split("\n");let h="",i=0,op="";const shut=()=>{if(op){h+=`</${op}>`;op=""}};
+ const cells=l=>l.trim().replace(/^\||\|$/g,"").split("|").map(c=>c.trim()),isRow=l=>/^\s*\|.*\|\s*$/.test(l||"");
+ while(i<L.length){const l=L[i];let m;
+  if(isRow(l)&&/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(L[i+1]||"")){shut();const hd=cells(l),rows=[];i+=2;while(isRow(L[i]))rows.push(cells(L[i++]));
+   h+=`<div class="tw"><table class="ref"><thead><tr>${hd.map(c=>`<th>${inl(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr>${hd.map((c,k)=>`<td data-label="${esc(c)}">${inl(r[k]||"")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;continue}
+  if(m=/^\s{0,3}(#{1,6})\s+(.*)$/.exec(l)){shut();h+=`<h4 class="mh${m[1].length<=2?" big":""}">${inl(m[2])}</h4>`}
+  else if(/^\s*([-*_])\1{2,}\s*$/.test(l)){shut();h+="<hr>"}
+  else if(m=/^(\s*)[-*•]\s+(.*)$/.exec(l)){if(op!=="ul"){shut();h+="<ul>";op="ul"}h+=`<li${m[1].length>=2?' class="sub"':""}>${inl(m[2])}</li>`}
+  else if(m=/^\s*\d+[.)]\s+(.*)$/.exec(l)){if(op!=="ol"){shut();h+="<ol>";op="ol"}h+=`<li>${inl(m[1])}</li>`}
+  else if(m=/^>\s?(.*)$/.exec(l)){shut();h+=`<blockquote>${inl(m[1])}</blockquote>`}
+  else if(!l.trim())shut();
+  else{shut();h+=`<p>${inl(l.trim())}</p>`}
+  i++}
+ shut();return h}
+const pts=a=>`<ul class="pts">${a.map(t=>{const m=/^(.{2,42}?):\s+(.+)$/.exec(t);return `<li>${m?`<b>${esc(m[1])}</b> ${esc(m[2])}`:esc(t)}</li>`}).join("")}</ul>`;
+const srcLinks=a=>(a||[]).length?`<p class="sm muted">Read more: ${a.map(x=>x.url&&safeUrl(x.url)?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>`:esc(x.title)).join(" · ")}</p>`:"";
+function guideHTML(g){return `<div class="sg"><div class="sgh"><h3>${esc(g.title)}</h3>${g.overview?`<p>${esc(g.overview)}</p>`:""}</div>`+
+ g.sections.map((s,i)=>`<details class="sgs"${i<2?" open":""}><summary>${esc(s.heading)}</summary>${pts(s.points)}${s.mnemonic?`<p class="mn">Memory aid: ${esc(s.mnemonic)}</p>`:""}</details>`).join("")+
+ (g.high_yield.length?`<div class="co hy"><h4>High-yield</h4>${pts(g.high_yield)}</div>`:"")+(g.pitfalls.length?`<div class="co pf"><h4>Common pitfalls</h4>${pts(g.pitfalls)}</div>`:"")+
+ (g.questions.length?`<div class="sgq"><h4>Test yourself</h4><p class="sm muted">Think first, then tap a question to see the answer.</p>${g.questions.map((x,i)=>`<details><summary><b>${i+1}.</b> ${esc(x.q)}</summary><p>${esc(x.a)}</p></details>`).join("")}</div>`:"")+srcLinks(g.sources)+`</div>`}
+const guideTxt=g=>[g.title,"",g.overview,"",...g.sections.flatMap(s=>[s.heading.toUpperCase(),...s.points.map(p=>"- "+p),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),""]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
+const saveBlob=(b,name)=>{const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)};
+const fname=t=>(String(t||"").replace(/[^\w\- ]+/g,"").trim().slice(0,60)||"study");
+const jpost=(u,b)=>api(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+function showAnswer(id,r,pr){const o=$("#out"),g=r.guide,text=g?guideTxt(g):r.text||"";
+ o.innerHTML=(g?guideHTML(g):`<div class="md">${md(text)}</div>`)+`<div class="row acts">${g?`<button class="p" id="gp">Download PDF</button>`:""}<button id="gs">Save to my notes</button>${g?`<button id="gf">Make flashcards</button>`:""}<button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
+ const say=t=>{const e=$("#am");if(e)e.textContent=t};
+ if(g)$("#gp").onclick=async()=>{say("Building PDF…");try{saveBlob(await jpost("/api/guide/pdf",{guide:g,courseId:id}),fname(g.title)+".pdf");say("")}catch(e){say(e.message)}};
+ $("#gs").onclick=async()=>{try{await post("/api/materials",{courseId:id,type:"note",title:(g?g.title:pr||"Study help").slice(0,100),body:text,translate:"0"});say("Saved. It shows in the materials list when you reopen this course.")}catch(e){say(e.message)}};
+ if(g)$("#gf").onclick=async()=>{say("Making flashcards…");try{say(`Added ${(await post("/api/cards/generate",{courseId:id,prompt:g.title})).added} cards. Review them under Today.`)}catch(e){say(e.message)}};
+ $("#gc").onclick=async()=>{try{await navigator.clipboard.writeText(text);say("Copied")}catch{say("Could not copy. Select the text and copy it by hand.")}}}
+
+/* ---------- presentation: preview with pictures, then download ---------- */
+let deck=null;
+const dObj=k=>k===0?deck.cover:deck.slides[k-1];
+const dText=s=>s.layout==="steps"?s.steps.map(x=>x.head):s.layout==="compare"?[s.left.head+" vs "+s.right.head]:s.layout==="facts"?s.facts.map(x=>x.value+" "+x.label):s.bullets;
+function deckHTML(){const row=(k,o,title,lines)=>{const c=o.pick>=0?o.cands[o.pick]:null,n=o.cands.length;
+  return `<div class="ds">${c?`<img src="${esc(c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="ph">${k===0||n?"No picture":"Text slide"}</div>`}<div><b>${esc(title)}</b><ul>${lines.slice(0,3).map(t=>`<li>${esc(t.length>90?t.slice(0,88)+"…":t)}</li>`).join("")}</ul>
+  ${c?`<div class="cr">${esc(c.credit)}</div>`:""}${n?`<div class="row">${n>1&&c?`<button data-sw="${k}">Another picture (${o.pick+1}/${n})</button>`:""}${c?`<button data-no="${k}">No picture</button>`:`<button data-sw="${k}">Use a picture</button>`}</div>`:""}</div></div>`};
+ return `<div class="dk"><h3>${esc(deck.title)}</h3><p class="sm muted">${deck.slides.length+2} slides with outline and sources. Check each picture fits, swap any you do not like, then download.</p>
+ <div class="row"><label class="sm">Style <select id="dth">${Object.entries(deckThemes).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join("")}</select></label><button class="p" id="d1">Download PowerPoint</button><button id="d2">Download PDF</button><button id="d3">Both</button><span class="sm muted" id="dm"></span></div>`+
+ row(0,deck.cover,"Title slide: "+deck.title,[deck.subtitle].filter(Boolean))+deck.slides.map((s,i)=>row(i+1,s,s.title,dText(s))).join("")+srcLinks(deck.sources)+`</div>`}
+let deckThemes={};
+function wireDeck(id){const box=$("#deck");box.innerHTML=deckHTML();
+ box.querySelectorAll("[data-sw]").forEach(b=>b.onclick=()=>{const o=dObj(+b.dataset.sw);o.pick=o.pick<0?0:(o.pick+1)%o.cands.length;wireDeck(id)});
+ box.querySelectorAll("[data-no]").forEach(b=>b.onclick=()=>{dObj(+b.dataset.no).pick=-1;wireDeck(id)});
+ const slim=o=>({...o,cands:o.pick>=0?[o.cands[o.pick]]:[],pick:o.pick>=0?0:-1});
+ const get=async fmt=>{const b=await jpost("/api/deck/export",{deck:{...deck,cover:slim(deck.cover),slides:deck.slides.map(slim)},format:fmt,theme:$("#dth").value});saveBlob(b,fname(deck.title)+"."+fmt)};
+ const run=fmts=>async()=>{const m=$("#dm");m.textContent="Building file… this can take 20 seconds";box.querySelectorAll("button").forEach(x=>x.disabled=true);
+  try{for(const f of fmts){await get(f);if(fmts.length>1)await new Promise(r=>setTimeout(r,700))}m.textContent="Downloaded. Check the picture credits on the last slide."}catch(e){m.textContent=e.message}
+  box.querySelectorAll("button").forEach(x=>x.disabled=false)};
+ $("#d1").onclick=run(["pptx"]);$("#d2").onclick=run(["pdf"]);$("#d3").onclick=run(["pptx","pdf"])}
+
 /* ---------- course page ---------- */
 async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$("#crumb").textContent=`Year ${cur.year}`;
  const mats=await api("/api/materials?courseId="+id);const fl=flash;flash="";
@@ -300,15 +370,15 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
  <div id="list">${mats.map(card).join("")||'<p class="muted">No materials yet. Add your first one above.</p>'}</div>
  <div class="card"><h3>Study help</h3><div class="row tabs"><button data-m="chat" class="on">Ask</button><button data-m="guide">Study guide</button><button data-m="quiz">Quiz me</button><button data-m="cards">Flashcards</button><button data-m="ppt">Presentation</button></div>
- <textarea id="pr" placeholder="Ask a question, or name a topic"></textarea><div class="row"><button class="p" id="ai">Go</button><span id="st" class="muted"></span></div><pre id="out"></pre>
- <div class="row"><button id="dp" hidden>Download PowerPoint</button><button id="df" hidden>Download PDF</button></div>
+ <textarea id="pr" placeholder="Ask a question about this course"></textarea><div class="row"><button class="p" id="ai">Ask</button><label id="popt" class="sm" hidden>Slides <select id="ns"><option>8</option><option>10</option><option selected>12</option><option>14</option><option>16</option></select></label><button class="p" id="bp" hidden>Build presentation</button><span id="st" class="muted"></span></div><div id="out" class="out"></div><div id="deck"></div>
  <div class="row"><a href="/api/anki/export?courseId=${id}" download>Export cards for Anki</a><label class="muted fl">Import from Anki <input type="file" id="ai2" accept=".txt,.tsv,.csv"></label></div></div>`;
  let mode="chat";
  document.querySelectorAll(".tp").forEach(b=>b.onclick=()=>{$("#pr").value=cur.topics[+b.dataset.i];$("#pr").scrollIntoView({behavior:"smooth",block:"center"});$("#pr").focus()});
  $("#foc").onclick=()=>{T.courseId=id;saveT();go("focus")};
  const mt=$("#mt");mt.onchange=()=>{$("#fl").accept=mt.value==="photo"?"image/*":"";$("#ur").hidden=!["link","3d"].includes(mt.value)};
+  const PH={chat:"Ask a question about this course",guide:"Topic for the study guide (leave empty for the whole course)",quiz:"Topic to be quizzed on (optional)",cards:"Topic for the flashcards (optional)",ppt:"Presentation topic, for example: Heart failure"},GO={chat:"Ask",guide:"Make study guide",quiz:"Start quiz",cards:"Make flashcards"};
  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{mode=b.dataset.m;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
-  $("#dp").hidden=$("#df").hidden=mode!=="ppt";$("#ai").hidden=mode==="ppt"});
+  const ppt=mode==="ppt";$("#bp").hidden=$("#popt").hidden=!ppt;$("#ai").hidden=ppt;$("#ai").textContent=GO[mode]||"Go";$("#pr").placeholder=PH[mode]});
  $("#ai2").onchange=async e=>{try{const r=await post("/api/anki/import",{courseId:id,text:await e.target.files[0].text()});$("#out").textContent=`Imported ${r.added} cards. Review them under Today.`}catch(x){$("#out").textContent=x.message}};
  $("#sv").onclick=async()=>{const e1=$("#e1");e1.textContent="Saving…";$("#sv").disabled=true;
   try{const ph=$("#fl").files[0],pho=mt.value==="photo";if(pho&&!ph){e1.textContent="Choose or take a photo first";return}
@@ -320,10 +390,14 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
     else{const f=new FormData();Object.entries(base).forEach(([k,v])=>f.append(k,v));f.append("file",ph);r=await api("/api/materials",{method:"POST",body:f})}}
    else r=await post("/api/materials",base);
    if(r&&r.warning)flash=r.warning;open(id)}catch(e){e1.textContent=e.message}finally{$("#sv").disabled=false}};
- $("#ai").onclick=async()=>{$("#st").textContent="Thinking…";$("#out").textContent="";try{const pr=$("#pr").value;if(mode==="quiz")await runQuiz(id,pr);else if(mode==="cards")$("#out").textContent=`Added ${(await post("/api/cards/generate",{courseId:id,prompt:pr})).added} cards. Review them under Today.`;else $("#out").textContent=(await post("/api/ai",{courseId:id,mode,prompt:pr})).text}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
- for(const [btn,fmt] of [["#dp","pptx"],["#df","pdf"]])$(btn).onclick=async()=>{$("#st").textContent="Building…";try{
-  const b=await api("/api/present",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({courseId:id,topic:$("#pr").value||cur.title,format:fmt})});
-  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=($("#pr").value||cur.title)+"."+fmt;a.click()}catch(e){$("#out").textContent=e.message}$("#st").textContent=""};
+ deck=null;
+ $("#ai").onclick=async()=>{const st=$("#st"),o=$("#out"),pr=$("#pr").value.trim(),btn=$("#ai");if(mode==="chat"&&!pr){o.textContent="Type a question first.";return}
+  st.textContent=mode==="guide"?"Researching and writing your study guide. This takes a little while…":"Thinking…";o.textContent="";btn.disabled=true;
+  try{if(mode==="quiz")await runQuiz(id,pr);else if(mode==="cards")o.textContent=`Added ${(await post("/api/cards/generate",{courseId:id,prompt:pr})).added} cards. Review them under Today.`;else showAnswer(id,await post("/api/ai",{courseId:id,mode,prompt:pr}),pr)}catch(e){o.textContent=e.message}
+  st.textContent="";btn.disabled=false};
+ $("#bp").onclick=async()=>{const st=$("#st"),btn=$("#bp");st.textContent="Researching the topic, writing the slides and searching for pictures. This can take up to a minute…";$("#out").textContent="";$("#deck").innerHTML="";btn.disabled=true;
+  try{const r=await jpost("/api/deck",{courseId:id,topic:$("#pr").value.trim()||cur.title,slides:+$("#ns").value});deck=r.deck;deckThemes=r.themes;wireDeck(id);$("#deck").scrollIntoView({behavior:"smooth",block:"start"})}catch(e){$("#out").textContent=e.message}
+  st.textContent="";btn.disabled=false};
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this material?")){await api("/api/materials/"+b.dataset.del,{method:"DELETE"});open(id)}})}
 function card(m){let v="";const u=safeUrl(m.url);
  if(m.type==="3d"){v=/\.(glb|gltf)$/i.test(m.file)?`<model-viewer src="/files/${m.file}" camera-controls auto-rotate></model-viewer>`:u?`<iframe src="${esc(u)}" allowfullscreen></iframe>`:""}
@@ -354,7 +428,7 @@ async function viewSearch(){
    document.querySelectorAll("#sf [data-c]").forEach(b=>b.onclick=()=>open(b.dataset.c))}catch(e){if(e.message!=="login")$("#sf").innerHTML=errBox(e);const rb=$("#retry");if(rb)rb.onclick=find}};
  $("#sq").oninput=()=>{clearTimeout(tm);tm=setTimeout(find,250)};
  const go2=async()=>{if(!$("#sq").value.trim())return;$("#ss").textContent="Asking…";try{const r=await post("/api/search",{query:$("#sq").value});
-  $("#sr").innerHTML=`<div class="card"><h3>AI answer</h3><pre>${esc(r.answer).replace(/\[(\d+)\]/g,"<sup>[$1]</sup>")}</pre></div>`+r.sources.map(s=>`<div class="card"><b>[${s.n}] ${esc(s.title)}</b> <span class="muted">${esc(s.course)}</span><p>${esc(s.snippet)}</p><button data-c="${s.courseId}">Open course</button></div>`).join("");
+  $("#sr").innerHTML=`<div class="card"><h3>AI answer</h3><div class="md">${md(r.answer)}</div></div>`+r.sources.map(s=>`<div class="card"><b>[${s.n}] ${esc(s.title)}</b> <span class="muted">${esc(s.course)}</span><p>${esc(s.snippet)}</p><button data-c="${s.courseId}">Open course</button></div>`).join("");
   document.querySelectorAll("#sr [data-c]").forEach(b=>b.onclick=()=>open(b.dataset.c))}catch(e){$("#sr").innerHTML=`<p class="err">${esc(e.message)}</p>`}$("#ss").textContent=""};
  $("#sg").onclick=go2;$("#sq").onkeydown=e=>{if(e.key==="Enter")go2()}}
 

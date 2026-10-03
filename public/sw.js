@@ -1,5 +1,5 @@
 // Asclepius service worker: lets the app open and show what you used before, even with no signal.
-const SHELL = "asclepius-shell-v7", DATA = "asclepius-data-v7";
+const SHELL = "asclepius-shell-v8", DATA = "asclepius-data-v8";
 const PRECACHE = ["/", "/manifest.json", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/404.html"];
 const NEVER = /^\/api\/(backup|anki|health|cron|login|logout)/; // never stored: exports, backups, status, sign-in
 const BIG = 15 * 1024 * 1024; // do not keep uploaded files larger than this
