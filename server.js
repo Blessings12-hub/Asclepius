@@ -6,7 +6,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import PptxGenJS from "pptxgenjs";
-import PDFDocument from "pdfkit";
+import PDFDocument from "pdfkit/js/pdfkit.standalone.js"; // fonts are built into this file, so PDF export also works on Vercel
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import { kv, docs, files, backups, cloud, mode, ready, onVercel, UPLOAD_DIR } from "./lib/store.js";
 import { seedCourses, seedRefs, courseId } from "./lib/seed.js";
@@ -37,7 +37,7 @@ async function getCourses() {
   if (!c) { c = seedCourses(); await kv.set("courses", c); }
   return c;
 }
-const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120 };
+const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120, reminderTime: "" };
 const getSettings = async () => ({ ...DEFAULTS, ...(await kv.get("settings", {})) });
 async function getRefs() {
   let r = await kv.get("refs", null);
@@ -68,15 +68,39 @@ const context = async (courseId) =>
 const app = express();
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "20mb" }));
-const tok = () => crypto.createHmac("sha256", SECRET).update(PASSWORD || "").digest("hex");
+const SESSION_MS = 30 * 864e5;
+const sign = (exp) => crypto.createHmac("sha256", SECRET).update(`${PASSWORD || ""}|${exp}`).digest("hex");
+const mkTok = () => { const exp = Date.now() + SESSION_MS; return `${exp.toString(16)}.${sign(exp)}`; };
 const same = (a, b) => {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
+// The cookie holds an expiry time and a signature. Changing PASSWORD or SECRET signs everyone out.
 const authed = (req) => {
-  const m = /(?:^|;\s*)t=([a-f0-9]+)/.exec(req.headers.cookie || "");
-  return !!PASSWORD && !!m && same(m[1], tok());
+  const m = /(?:^|;\s*)t=([a-f0-9]+)\.([a-f0-9]{64})/.exec(req.headers.cookie || "");
+  if (!PASSWORD || !m) return false;
+  const exp = parseInt(m[1], 16);
+  return exp > Date.now() && same(m[2], sign(exp));
 };
+// Basic browser protections on every response
+app.use((req, res, next) => {
+  res.set({
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    ...(req.secure ? { "Strict-Transport-Security": "max-age=15552000" } : {}),
+  });
+  if (req.path.startsWith("/api/")) res.set("Cache-Control", "no-store");
+  next();
+});
+
+// ---- login lockout: too many wrong passwords from one address locks it for a while ----
+const memFails = {};
+const failKey = (req) => crypto.createHash("sha256").update(String(req.ip || "?")).digest("hex").slice(0, 16);
+const loadFails = async () => { if (!ready) return memFails; try { return await kv.get("loginFails", {}); } catch { return memFails; } };
+const saveFails = async (f) => { Object.assign(memFails, f); if (ready) await kv.set("loginFails", f).catch(() => {}); };
+const lockMinutes = (n) => (n < 5 ? 0 : Math.min(60, 5 * 2 ** (n - 5)));
 const guard = (req, res, next) => (authed(req) ? next() : res.status(401).json({ error: "login" }));
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch((e) => res.status(e.status || 500).json({ error: e.message }));
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -94,10 +118,27 @@ app.get("/api/health", wrap(async (req, res) => {
 }));
 app.post("/api/login", wrap(async (req, res) => {
   if (!PASSWORD) throw bad("The server has no PASSWORD set. Add PASSWORD in your environment variables and redeploy.", 500);
-  if (!same(String(req.body.password ?? ""), PASSWORD)) { await sleep(700); throw bad("Wrong password", 401); }
-  res.setHeader("Set-Cookie", `t=${tok()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${req.secure ? "; Secure" : ""}`);
+  const fails = await loadFails(), k = failKey(req), now = Date.now(), f = fails[k] || { n: 0, until: 0 };
+  if (f.until > now) {
+    const mins = Math.ceil((f.until - now) / 6e4);
+    throw bad(`Too many wrong passwords. Try again in ${mins} minute${mins === 1 ? "" : "s"}.`, 429);
+  }
+  if (!same(String(req.body.password ?? ""), PASSWORD)) {
+    f.n += 1; f.last = now; f.until = now + lockMinutes(f.n) * 6e4; fails[k] = f;
+    for (const x of Object.keys(fails)) if (now - (fails[x].last || 0) > 864e5) delete fails[x];
+    await saveFails(fails);
+    await sleep(700);
+    const left = 5 - f.n;
+    throw bad(left > 0 ? `Wrong password. ${left} ${left === 1 ? "try" : "tries"} left before a short lock.` : "Too many wrong passwords. Locked for a while.", 401);
+  }
+  if (fails[k]) { delete fails[k]; await saveFails(fails); }
+  res.setHeader("Set-Cookie", `t=${mkTok()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${req.secure ? "; Secure" : ""}`);
   res.json({ ok: 1 });
 }));
+app.post("/api/logout", (req, res) => {
+  res.setHeader("Set-Cookie", `t=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${req.secure ? "; Secure" : ""}`);
+  res.json({ ok: 1 });
+});
 
 // Everything below needs working storage. On Vercel that means Supabase must be set up.
 app.use("/api", (req, res, next) =>
@@ -289,7 +330,7 @@ app.post("/api/present", wrap(async (req, res) => {
         const m = imgs[i];
         doc.fontSize(30).fillColor("#14232B").text(s.title, 60, 50, { width: 720 });
         doc.fontSize(20).list(s.bullets, 60, 120, { width: m ? 400 : 720, bulletRadius: 3, textIndent: 16, bulletIndent: 8 });
-        if (m) { doc.image(m.b, 490, 120, { fit: [300, 280] }); doc.fontSize(8).fillColor("#5a6d70").text(m.credit, 490, 410, { width: 300 }); }
+        if (m) { doc.image(m.b.buffer.slice(m.b.byteOffset, m.b.byteOffset + m.b.byteLength), 490, 120, { fit: [300, 280] }); doc.fontSize(8).fillColor("#5a6d70").text(m.credit, 490, 410, { width: 300 }); }
       });
       doc.end(); await new Promise((r) => doc.on("end", r));
       out = Buffer.concat(chunks);
@@ -326,10 +367,14 @@ app.post("/api/cards/generate", wrap(async (req, res) => {
   res.json({ added: cards.length });
 }));
 app.get("/api/cards/due", wrap(async (q, res) => res.json(await docs.list("cards", { numLte: Date.now(), sortNum: true, limit: 50 }))));
+app.get("/api/cards/count", wrap(async (q, res) => res.json({ due: (await docs.list("cards", { numLte: Date.now(), project: ["due"] })).length })));
 app.post("/api/cards/:id/review", wrap(async (req, res) => {
   const c = await docs.get("cards", req.params.id), g = +req.body.grade;
   if (!c) throw bad("No such card", 404);
   if (![0, 1, 2, 3].includes(g)) throw bad("Bad grade");
+  const rid = String(req.body.rid || "").slice(0, 40);
+  if (rid && c.lastRid === rid) return res.json({ ok: 1, duplicate: 1 });
+  if (rid) c.lastRid = rid;
   if (g === 0) { c.ease = Math.max(1.3, c.ease - 0.2); c.interval = 0; c.due = Date.now() + 6e5; }
   else {
     c.interval = c.interval ? Math.round(c.interval * c.ease * [0, 0.8, 1, 1.3][g]) || 1 : [0, 1, 2, 4][g];
@@ -416,6 +461,30 @@ app.post("/api/anki/import", wrap(async (req, res) => {
 
 // ---- search across everything, with citations ----
 const tokens = (t) => String(t).toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+// Instant keyword search (no AI): notes and files, flashcards, courses and topics, study plan
+app.get("/api/find", wrap(async (req, res) => {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  if (q.length < 2) return res.json({ materials: [], cards: [], courses: [], plan: [] });
+  const words = q.split(/\s+/).filter(Boolean).slice(0, 6);
+  const all = (t) => { const l = String(t || "").toLowerCase(); return words.every((w) => l.includes(w)); };
+  const snip = (text) => {
+    const t = String(text || ""), l = t.toLowerCase();
+    const at = Math.max(0, Math.min(...words.map((w) => (l.indexOf(w) < 0 ? 1e9 : l.indexOf(w)))));
+    const from = at > 1e8 ? 0 : Math.max(0, at - 60);
+    return (from ? "…" : "") + t.slice(from, from + 220).replace(/\s+/g, " ") + (from + 220 < t.length ? "…" : "");
+  };
+  const [courses, mats, cards, plan] = await Promise.all([getCourses(), docs.list("materials", {}), docs.list("cards", {}), kv.get("plan", [])]);
+  const cname = (id) => { const c = courses.find((x) => x.id === id); return c ? `Year ${c.year}, ${c.title}` : ""; };
+  res.json({
+    materials: mats.filter((m) => all(m.title + " " + (m.body || ""))).slice(0, 25)
+      .map((m) => ({ id: m.id, title: m.title, courseId: m.courseId, course: cname(m.courseId), snippet: snip(all(m.title) && !all(m.body) ? m.title : m.body || m.title) })),
+    cards: cards.filter((c) => all(c.front + " " + c.back)).slice(0, 25)
+      .map((c) => ({ id: c.id, front: c.front, back: c.back, courseId: c.courseId, course: cname(c.courseId) })),
+    courses: courses.filter((c) => all(c.title + " " + (c.topics || []).join(" "))).slice(0, 15)
+      .map((c) => ({ id: c.id, title: c.title, year: c.year, topics: (c.topics || []).filter((t) => all(t)).slice(0, 5) })),
+    plan: plan.filter((p) => all(p.title)).slice(0, 10).map((p) => ({ id: p.id, title: p.title, date: p.date, done: !!p.done })),
+  });
+}));
 app.post("/api/search", wrap(async (req, res) => {
   const q = String(req.body.query || "").trim();
   if (!q) throw new Error("Type a question first");
@@ -455,6 +524,11 @@ app.put("/api/settings", wrap(async (req, res) => {
     const v = Math.round(+req.body[k]);
     if (!(v >= lim[k][0] && v <= lim[k][1])) throw bad(`${k} must be between ${lim[k][0]} and ${lim[k][1]}`);
     cur[k] = v;
+  }
+  if (req.body.reminderTime !== undefined) {
+    const t = String(req.body.reminderTime);
+    if (t && !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) throw bad("Reminder time must look like 19:30");
+    cur.reminderTime = t;
   }
   await kv.set("settings", cur);
   res.json(cur);
@@ -599,10 +673,16 @@ app.delete("/api/backup/:id", wrap(async (req, res) => { await backups.del(bkId(
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 app.use(express.static(PUBLIC_DIR));
 app.get("/", (req, res) => res.sendFile("index.html", { root: PUBLIC_DIR }));
+// Unknown address: JSON for API calls, a friendly page for people
+app.use((req, res) => {
+  if (req.path.startsWith("/api/")) return res.status(404).json({ error: "That address does not exist on this server." });
+  res.status(404).sendFile("404.html", { root: PUBLIC_DIR });
+});
 
 // JSON errors instead of HTML error pages
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
+  if (err.status !== 400 && !err.status) console.error(err);
   res.status(err.status || 500).json({ error: err.type === "entity.too.large" ? "That is too large to send in one go" : err.message || "Server error" });
 });
 

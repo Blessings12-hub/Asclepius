@@ -65,7 +65,10 @@ You can also open `https://your-site.vercel.app/api/health` to see yes/no flags 
 - **Nightly backup:** on the free Vercel plan it runs once a day at some point in the 02:00 UTC hour. The app also makes a backup the first time you open it each day, so it works even without `CRON_SECRET`. The newest 7 automatic, 10 manual and 5 pre-restore backups are kept.
 - **Backups live in the same Supabase project as your data.** They protect you from mistakes, not from losing the Supabase account. Download a backup file now and then (the page reminds you).
 - **Size limits:** Vercel accepts at most about 4.5 MB per request. Restoring from an uploaded backup *file* is limited by that. Restoring from a saved backup in the list is not.
-- **PDF export of presentations** depends on font files that I could not confirm are packaged on Vercel. If it shows an error, use the PowerPoint download.
+- **PDF export of presentations** uses a PDFKit build that has its fonts built in, so it works on Vercel. PowerPoint is still the better format if you want to keep editing.
+- **Offline:** once you have opened a page while online, it opens again with no signal. Flashcard reviews and focus sessions done offline are saved on your phone and sync by themselves when you are back online.
+- **Sign-in protection:** after 5 wrong passwords from one address the sign-in locks (5 minutes, then longer). Sign-in lasts 30 days; use **Sign out** on the Backup page on shared devices.
+- **Review reminders:** set a time on the Today page. The app reminds you when it is open; the **Add to my calendar** button gives a daily reminder that works even when the app is closed.
 - **Safe to leave public:** the table is locked so only your server can read it, and every page of the app needs your password.
 
 ## Run on your own computer
