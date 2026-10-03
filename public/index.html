@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Asclepius</title>
-<link rel="manifest" href="/manifest.json"><meta name="theme-color" id="tc" content="#14232B">
+<link rel="manifest" href="/manifest.json"><link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-48.png" sizes="48x48" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Asclepius"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" id="tc" content="#14232B">
 <script>try{var t=localStorage.getItem("asc_theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <script type="module" src="https://cdnjs.cloudflare.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
 <style>
@@ -38,6 +38,7 @@ pre{white-space:pre-wrap;font:inherit}iframe,model-viewer{width:100%;height:340p
 .err{color:var(--bad)}.muted{color:var(--muted)}.sm{font-size:13px}
 a{color:var(--acc)}
 #login{max-width:340px;margin:12vh auto;padding:0 18px}
+.logo{display:block;border-radius:22%}#login .logo{width:84px;height:84px;margin:0 0 14px}header h1{display:flex;align-items:center;gap:10px}header .logo{width:30px;height:30px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
 .tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;text-align:left;color:var(--ink)}
 .tile b{display:block;font:700 28px/1.2 Georgia,serif}
@@ -67,10 +68,10 @@ table.ref td:first-child{font-weight:700}
  table.ref td{display:block;border:0;padding:3px 4px}table.ref td[data-label]::before{content:attr(data-label) ": ";color:var(--muted);font-size:13px;font-weight:400}
  table.ref td:first-child::before{content:""}}
 </style></head><body>
-<div id="login" hidden><h1>Asclepius</h1><p class="muted">Private study workspace.</p>
+<div id="login" hidden><img class="logo" src="/icon.svg" alt="Asclepius logo"><h1>Asclepius</h1><p class="muted">Private study workspace.</p>
 <input id="pw" type="password" placeholder="Password" autocomplete="current-password"><div class="row"><button class="p" id="go">Sign in</button></div><p class="err" id="lerr"></p></div>
 <div id="app" hidden>
-<header><h1>Asclepius</h1><div class="hr"><span class="muted" id="crumb" style="color:var(--headmuted)"></span><button id="chip" hidden title="Open the focus timer"></button><button id="theme" title="Change light / dark mode"></button></div></header>
+<header><h1><img class="logo" src="/icon.svg" alt="">Asclepius</h1><div class="hr"><span class="muted" id="crumb" style="color:var(--headmuted)"></span><button id="chip" hidden title="Open the focus timer"></button><button id="theme" title="Change light / dark mode"></button></div></header>
 <main><nav id="nav"></nav><section id="main"><p class="muted">Loading…</p></section></main></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -124,7 +125,7 @@ function ensureAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudi
 function beep(){try{ensureAudio();[0,.35,.7].forEach(d=>{const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=880;g.gain.value=.15;o.connect(g);g.connect(actx.destination);o.start(actx.currentTime+d);o.stop(actx.currentTime+d+.2)})}catch{}
  try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch{}}
 function notify(title,body){try{if(!("Notification"in window)||Notification.permission!=="granted")return;
- if(navigator.serviceWorker?.ready)navigator.serviceWorker.ready.then(r=>r.showNotification(title,{body,icon:"/icon.svg"})).catch(()=>{});else new Notification(title,{body,icon:"/icon.svg"})}catch{}}
+ if(navigator.serviceWorker?.ready)navigator.serviceWorker.ready.then(r=>r.showNotification(title,{body,icon:"/icon-192.png"})).catch(()=>{});else new Notification(title,{body,icon:"/icon-192.png"})}catch{}}
 function timerStart(){ensureAudio();try{if("Notification"in window&&Notification.permission==="default")Notification.requestPermission()}catch{}
  if(T.dur==null)resetPhase("focus");if(!T.running){T.running=true;T.endAt=Date.now()+T.remaining;saveT()}drawTimer()}
 function timerPause(){T.remaining=left();T.running=false;saveT();drawTimer()}
