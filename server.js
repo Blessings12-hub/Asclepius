@@ -8,10 +8,11 @@ import PptxGenJS from "pptxgenjs";
 import PDFDocument from "pdfkit";
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import { kv, docs, files, backups, cloud, mode, ready, onVercel, UPLOAD_DIR } from "./lib/store.js";
-import { seedCourses, seedRefs } from "./lib/seed.js";
+import { seedCourses, seedRefs, courseId } from "./lib/seed.js";
 import { makeBackup, backupIfStale, listBackups, snapshot, restore } from "./lib/backup.js";
+import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
 
-const { PASSWORD, ANTHROPIC_API_KEY, SECRET = "change-me", MODEL = "claude-sonnet-4-6", OWNER = "Student", PORT = 3000, CRON_SECRET } = process.env;
+const { PASSWORD, SECRET = "change-me", OWNER = "Student", PORT = 3000, CRON_SECRET } = process.env;
 if (!onVercel && !cloud) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const id = () => crypto.randomBytes(6).toString("hex");
@@ -51,17 +52,7 @@ async function bump(day, field, n = 1) {
 }
 
 // ---- AI helpers ----
-async function claude(system, user, max = 4000) {
-  if (!ANTHROPIC_API_KEY) throw new Error("Add ANTHROPIC_API_KEY to your environment variables");
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: max, system, messages: [{ role: "user", content: user }] }),
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error?.message || "AI request failed");
-  return j.content.map((c) => c.text || "").join("");
-}
+const claude = (system, user, max = 4000, opts) => ai(system, user, max, opts);
 const translate = (t) =>
   claude("Translate the text into English. Keep structure and medical terms accurate. If it is already English, return it unchanged. Output only the text.", t.slice(0, 20000), 8000);
 async function pageText(url) {
@@ -70,8 +61,7 @@ async function pageText(url) {
   return (await r.text()).replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 30000);
 }
 const context = async (courseId) =>
-  (await docs.list("materials", { courseId })).filter((m) => m.body).map((m) => `# ${m.title}\n${m.body}`).join("\n\n").slice(0, 40000);
-const parseJSON = (t) => JSON.parse(t.replace(/```json|```/g, "").trim());
+  (await docs.list("materials", { courseId })).filter((m) => m.body).map((m) => `# ${m.title}\n${m.body}`).join("\n\n").slice(0, ctxChars);
 
 // ---- app + auth ----
 const app = express();
@@ -94,7 +84,7 @@ const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 app.get("/api/health", wrap(async (req, res) => {
   const h = {
     ok: true, storage: mode, vercel: onVercel, passwordSet: !!PASSWORD, secretChanged: SECRET !== "change-me",
-    aiKeySet: !!ANTHROPIC_API_KEY, cronSecretSet: !!CRON_SECRET,
+    aiKeySet: aiInfo().configured, aiProvider: aiInfo().provider, aiModels: aiInfo().models, cronSecretSet: !!CRON_SECRET,
   };
   if (authed(req) && ready) {
     try { await kv.get("settings", null); h.storageOk = true; } catch (e) { h.storageOk = false; h.storageError = e.message; }
@@ -155,14 +145,59 @@ app.get("/files/:name", guard, wrap(async (req, res) => {
 
 // ---- courses & materials ----
 app.get("/api/courses", wrap(async (q, res) => res.json(await getCourses())));
+const cleanTopics = (t) => (Array.isArray(t) ? t : String(t || "").split("\n")).map((x) => String(x).trim().slice(0, 120)).filter(Boolean).slice(0, 80);
+const okYear = (y) => Number.isInteger(+y) && +y >= 1 && +y <= 8;
 app.post("/api/courses", wrap(async (req, res) => {
   const year = +req.body.year, title = String(req.body.title || "").trim().slice(0, 100);
-  if (!(year >= 1 && year <= 6) || !title) throw bad("Give the course a name");
+  if (!okYear(year) || !title) throw bad("Give the course a name");
   const list = await getCourses();
-  const c = { id: id(), year, title };
+  const c = { id: id(), year, title, topics: cleanTopics(req.body.topics) };
   list.push(c);
   await kv.set("courses", list);
   res.json(c);
+}));
+app.patch("/api/courses/:id", wrap(async (req, res) => {
+  const list = await getCourses(), c = list.find((x) => x.id === req.params.id);
+  if (!c) throw bad("Course not found", 404);
+  if (req.body.title !== undefined) { const t = String(req.body.title).trim().slice(0, 100); if (!t) throw bad("Give the course a name"); c.title = t; }
+  if (req.body.year !== undefined) { if (!okYear(req.body.year)) throw bad("Pick a year from 1 to 8"); c.year = +req.body.year; }
+  if (req.body.topics !== undefined) c.topics = cleanTopics(req.body.topics);
+  await kv.set("courses", list); res.json(c);
+}));
+app.delete("/api/courses/:id", wrap(async (req, res) => {
+  const list = await getCourses();
+  if (!list.some((x) => x.id === req.params.id)) throw bad("Course not found", 404);
+  const n = (await docs.list("materials", { courseId: req.params.id })).length;
+  if (n && req.query.force !== "1") throw bad(`This course has ${n} material(s). Move them or confirm deletion first.`, 409);
+  for (const m of await docs.list("materials", { courseId: req.params.id })) { if (m.file) await files.del(m.file).catch(() => {}); await docs.del("materials", m.id); }
+  await kv.set("courses", list.filter((x) => x.id !== req.params.id)); res.json({ ok: 1 });
+}));
+// merge a list of {year,title,topics} into your courses. Same year+title = update topics; otherwise add. Never deletes.
+async function mergeOutline(items) {
+  const list = await getCourses(); let added = 0, updated = 0;
+  for (const it of items) {
+    const year = +it.year, title = String(it.title || "").trim().slice(0, 100);
+    if (!okYear(year) || !title) continue;
+    const topics = cleanTopics(it.topics);
+    const ex = list.find((c) => c.year === year && c.title.toLowerCase() === title.toLowerCase());
+    if (ex) { const have = new Set((ex.topics || []).map((t) => t.toLowerCase())); const add = topics.filter((t) => !have.has(t.toLowerCase())); if (add.length) { ex.topics = [...(ex.topics || []), ...add]; updated++; } }
+    else { list.push({ id: courseId(year, title), year, title, topics }); added++; }
+  }
+  await kv.set("courses", list); return { added, updated, courses: list };
+}
+app.post("/api/outline/starter", wrap(async (req, res) => res.json(await mergeOutline(seedCourses()))));
+app.post("/api/outline/parse", wrap(async (req, res) => {
+  const text = String(req.body.text || "").trim().slice(0, 30000);
+  if (text.length < 20) throw bad("Paste the outline text first");
+  const out = parseJSON(await claude(
+    'You convert a medical school programme outline into JSON. Return ONLY a JSON array [{"year":number,"title":string,"topics":[string]}]. Use only what the text says: do not invent courses or topics. If a year is not stated, use 1. Keep topic names short.',
+    text.slice(0, ctxChars), 6000));
+  if (!Array.isArray(out)) throw bad("Could not read an outline from that text");
+  res.json({ items: out.filter((x) => x && x.title).map((x) => ({ year: +x.year || 1, title: String(x.title), topics: cleanTopics(x.topics) })) });
+}));
+app.post("/api/outline/apply", wrap(async (req, res) => {
+  if (!Array.isArray(req.body.items) || !req.body.items.length) throw bad("Nothing to apply");
+  const r = await mergeOutline(req.body.items); res.json({ added: r.added, updated: r.updated });
 }));
 app.get("/api/materials", wrap(async (req, res) => res.json(await docs.list("materials", { courseId: String(req.query.courseId || "-") }))));
 app.post("/api/materials", upload.single("file"), wrap(async (req, res) => {
@@ -240,7 +275,7 @@ app.post("/api/present", wrap(async (req, res) => {
   const { courseId, topic, format } = req.body;
   const raw = await claude(
     'Return ONLY JSON: an array of 8-12 slides, each {"title":string,"bullets":[3-5 short strings],"notes":string,"image":"2-4 word search query for a real diagram or photo"}. Plain, natural student-written wording. No markdown, no mention of AI.',
-    `Topic: ${topic}\n\nMy materials:\n${(await context(courseId)).slice(0, 20000)}`, 6000);
+    `Topic: ${topic}\n\nMy materials:\n${(await context(courseId)).slice(0, Math.min(ctxChars, 20000))}`, 6000);
   const slides = JSON.parse(raw.replace(/```json|```/g, "").trim());
   const imgs = await Promise.all(slides.map((s) => wikiImage(s.image || s.title)));
   if (format === "pdf") {
@@ -350,7 +385,7 @@ app.post("/api/capture", upload.single("image"), wrap(async (req, res) => {
   const mt = { ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" }[extOf(f.originalname)] || "image/jpeg";
   const body = await claude(
     "Transcribe all text in the image in reading order, describing any diagram or table briefly in square brackets. Then write clean English study notes from it, translating if the text is not English and keeping medical terms accurate. Use two parts headed 'Transcription' and 'Notes (English)'.",
-    [{ type: "image", source: { type: "base64", media_type: mt, data: (await fileBytes(key, f)).toString("base64") } }, { type: "text", text: "Process this page." }], 6000);
+    "Process this page.", 6000, { image: { mime: mt, data: (await fileBytes(key, f)).toString("base64") } });
   const m = { id: id(), courseId: req.body.courseId, type: "photo", title: String(req.body.title || "Photo notes").slice(0, 200), url: "", body, file: key };
   await docs.put("materials", m); res.json(m);
 }));

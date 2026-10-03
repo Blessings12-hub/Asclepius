@@ -4,7 +4,7 @@ A private study workspace for medical school. Single user.
 
 ## What it does
 
-- Years 1-6, each with editable courses (the starter list is a generic curriculum; add, rename or extend it)
+- 5 years (MBChB length), each with courses and topics. The starter list is a typical layout, not any university's official outline. Use Course outline to import your own school's outline or edit freely
 - Materials per course: notes, web links, files, and 3D lessons (embed link such as a Sketchfab URL, or upload a `.glb`/`.gltf`)
 - Translate to English: paste text or a link in any language, or tick the box when saving a material
 - Study help: ask questions, make study guides and quizzes from your own materials
@@ -47,7 +47,7 @@ You need three free accounts: GitHub, Vercel and Supabase. Supabase is where you
 | --- | --- |
 | `PASSWORD` | the password you will sign in with (make it long) |
 | `SECRET` | any long random text (30+ characters) |
-| `ANTHROPIC_API_KEY` | your Anthropic key |
+| `GEMINI_API_KEY` | free key from aistudio.google.com (or use `GROQ_API_KEY` from console.groq.com) |
 | `SUPABASE_URL` | the Project URL from step 2 |
 | `SUPABASE_SECRET_KEY` | the secret key from step 2 |
 | `CRON_SECRET` | any other long random text (switches on the nightly backup) |
@@ -72,11 +72,15 @@ You can also open `https://your-site.vercel.app/api/health` to see yes/no flags 
 
 ```bash
 npm install
-cp .env.example .env   # set PASSWORD, SECRET, ANTHROPIC_API_KEY
+cp .env.example .env   # set PASSWORD, SECRET, GEMINI_API_KEY
 npm start              # http://localhost:3000
 ```
 
 Needs Node 20+. With no Supabase variables set, data is saved in `data/` (git-ignored) and backups in `data/backups/`. Add the two `SUPABASE_` variables to use the cloud instead.
+
+## Free AI
+
+The app uses Google Gemini or Groq, both of which have free tiers that I believe need no card. Set one key and it is picked automatically. Free limits (requests per minute and per day) change and are shown in your provider's dashboard; I could not confirm exact numbers. When a limit is hit, the app tells you and tries the backup model. Model names change over time: if you see "model not found", set `AI_MODELS` to a current name. Free tiers may use your prompts to improve the provider's products (check their terms), so avoid putting patient-identifying information in. Photo notes need Gemini, or Groq with a vision model.
 
 ## Notes
 
