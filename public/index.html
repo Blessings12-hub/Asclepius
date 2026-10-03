@@ -158,8 +158,9 @@ setInterval(tick,500);
 $("#chip").onclick=()=>go("focus");
 
 /* ---------- navigation ---------- */
-const VIEWS={today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
-const TITLES={today:"Today",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
+const yrs=()=>Array.from({length:Math.max(5,...courses.map(c=>+c.year||1))},(_,i)=>i+1);
+const VIEWS={outline:()=>viewOutline(),today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
+const TITLES={today:"Today",outline:"Course outline",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
 function go(v){view=v;cur=null;drawNav();$("#crumb").textContent=TITLES[v];VIEWS[v]().catch(e=>{if(e.message!=="login")$("#main").innerHTML=`<p class="err">${esc(e.message)}</p>`})}
 async function init(){
  try{courses=await api("/api/courses")}catch(e){if(e.message!=="login"){$("#login").hidden=true;$("#app").hidden=false;$("#nav").innerHTML="";
@@ -170,12 +171,41 @@ async function init(){
  flushPending();post("/api/backup/auto").catch(()=>{});tick();go("today")}
 function drawNav(){const items=Object.entries(TITLES);
  $("#nav").innerHTML=`<div class="prim">${items.map(([k,t])=>`<button class="c ${!cur&&view===k?"on":""}" data-v="${k}"><b>${t}</b></button>`).join("")}</div>
- <details ${wide()||cur?"open":""}><summary>Courses by year</summary>`+[1,2,3,4,5,6].map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
+ <details ${wide()||cur?"open":""}><summary>Courses by year</summary>`+yrs().map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
  courses.filter(c=>c.year===y).map(c=>`<button class="c ${cur&&cur.id===c.id?"on":""}" data-id="${c.id}">${esc(c.title)}</button>`).join("")}
  <button class="c muted" data-add="${y}">+ Add course</button></details>`).join("")+`</details>`;
  document.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>go(b.dataset.v));
  document.querySelectorAll("[data-id]").forEach(b=>b.onclick=()=>open(b.dataset.id));
  document.querySelectorAll("[data-add]").forEach(b=>b.onclick=async()=>{const t=prompt("Course name");if(t){try{await post("/api/courses",{year:b.dataset.add,title:t});courses=await api("/api/courses");drawNav()}catch(e){alert(e.message)}}})}
+
+/* ---------- course outline ---------- */
+async function viewOutline(){courses=await api("/api/courses");drawNav();
+ const grp=yrs().map(y=>{const l=courses.filter(c=>c.year===y);return `<details ${y===1?"open":""}><summary><b>Year ${y}</b> <span class="muted sm">(${l.length} courses)</span></summary>${l.map(c=>`<details class="card"><summary>${esc(c.title)} <span class="muted sm">${(c.topics||[]).length} topics</span></summary>
+  <label class="sm">Name</label><input data-f="title" data-id="${c.id}" value="${esc(c.title)}">
+  <label class="sm">Year</label><input data-f="year" data-id="${c.id}" type="number" min="1" max="8" value="${c.year}">
+  <label class="sm">Topics (one per line)</label><textarea data-f="topics" data-id="${c.id}" rows="6">${esc((c.topics||[]).join("\n"))}</textarea>
+  <div class="row"><button class="p" data-save="${c.id}">Save</button><button data-del="${c.id}">Delete course</button></div></details>`).join("")||'<p class="muted sm">No courses.</p>'}</details>`}).join("");
+ $("#main").innerHTML=`<h2>Course outline</h2><p class="sm muted">Organise your courses and topics by year. Nothing here is deleted unless you press Delete.</p>
+ <div class="card"><h3>Import your school's outline</h3><p class="sm muted">Paste the programme outline text from your handbook or syllabus (any language). The AI reads it and shows you a preview first. It is told to use only what the text says, but check the preview.</p>
+ <textarea id="ot" rows="6" placeholder="Paste the outline here"></textarea><div class="row"><button class="p" id="op">Read outline</button><span id="os" class="muted"></span></div><div id="opv"></div></div>
+ <div class="card"><h3>Starter 5-year structure</h3><p class="sm muted">A typical MBChB layout I wrote from general knowledge. It is <b>not</b> any university's official outline. Adding it keeps what you have and only adds what is missing.</p><div class="row"><button id="st5">Add the starter structure</button><span id="ss" class="muted"></span></div></div>
+ <div class="card"><h3>Add a course</h3><div class="row"><input id="nt" placeholder="Course name"><input id="ny" type="number" min="1" max="8" value="1" style="width:5em"><button id="na">Add</button></div></div>
+ ${grp}`;
+ const reload=()=>viewOutline();
+ $("#st5").onclick=async()=>{try{const r=await post("/api/outline/starter");$("#ss").textContent=`Added ${r.added} courses, updated ${r.updated}.`;courses=r.courses;drawNav();setTimeout(reload,800)}catch(e){$("#ss").textContent=e.message}};
+ $("#na").onclick=async()=>{try{await post("/api/courses",{year:$("#ny").value,title:$("#nt").value});reload()}catch(e){alert(e.message)}};
+ document.querySelectorAll("[data-save]").forEach(b=>b.onclick=async()=>{const id=b.dataset.save,g=f=>document.querySelector(`[data-f="${f}"][data-id="${id}"]`).value;
+  try{await send("PATCH","/api/courses/"+id,{title:g("title"),year:g("year"),topics:g("topics")});reload()}catch(e){alert(e.message)}});
+ document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{const id=b.dataset.del,c=courses.find(x=>x.id===id);
+  if(!confirm(`Delete "${c.title}"? Its materials will be deleted too.`))return;
+  try{await send("DELETE","/api/courses/"+id+"?force=1");reload()}catch(e){alert(e.message)}});
+ $("#op").onclick=async()=>{$("#os").textContent="Reading…";$("#opv").innerHTML="";
+  try{const r=await post("/api/outline/parse",{text:$("#ot").value});$("#os").textContent="";
+   if(!r.items.length){$("#os").textContent="Nothing found in that text.";return}
+   $("#opv").innerHTML=`<h4>Preview (${r.items.length} courses)</h4>`+r.items.map(i=>`<p class="sm"><b>Year ${esc(i.year)}: ${esc(i.title)}</b><br><span class="muted">${esc(i.topics.join("; "))}</span></p>`).join("")+`<div class="row"><button class="p" id="oa">Add these to my courses</button></div>`;
+   $("#oa").onclick=async()=>{try{const a=await post("/api/outline/apply",{items:r.items});$("#opv").innerHTML=`<p>Added ${a.added} courses, updated ${a.updated}.</p>`;courses=await api("/api/courses");drawNav();setTimeout(reload,900)}catch(e){$("#opv").innerHTML=`<p class="err">${esc(e.message)}</p>`}}}
+  catch(e){$("#os").textContent=e.message}};
+}
 
 /* ---------- uploads: straight to storage when the server is on Vercel, through the server when local ---------- */
 function putFile(url,file,type,onp){return new Promise((res,rej)=>{const x=new XMLHttpRequest();x.open("PUT",url);x.setRequestHeader("content-type",type);
@@ -189,6 +219,7 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  const mats=await api("/api/materials?courseId="+id);const fl=flash;flash="";
  $("#main").innerHTML=`<h2>${esc(cur.title)}</h2>${fl?`<p class="err">${esc(fl)}</p>`:""}
  <div class="row"><button id="foc">Start a focus session for this course</button></div>
+ ${(cur.topics||[]).length?`<div class="card"><h3>Topics</h3><p class="sm muted">Tap a topic to study it with the AI helper below.</p><div class="row" style="flex-wrap:wrap">${cur.topics.map((t,i)=>`<button class="tp" data-i="${i}">${esc(t)}</button>`).join("")}</div></div>`:`<p class="sm muted">No topics yet. Add them under Course outline.</p>`}
  <div class="card"><h3>Add material</h3><div class="row"><select id="mt"><option value="note">Note / pasted text</option><option value="link">Web link (book, article)</option><option value="3d">3D lesson (embed link or .glb)</option><option value="photo">Photo of a page (handwriting, slides)</option><option value="file">File (PDF, slides, .txt)</option></select>
  <input id="ti" placeholder="Title"></div><input id="ur" placeholder="Link" hidden><textarea id="bd" placeholder="Paste text in any language"></textarea>
  <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
@@ -198,6 +229,7 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  <div class="row"><button id="dp" hidden>Download PowerPoint</button><button id="df" hidden>Download PDF</button></div>
  <div class="row"><a href="/api/anki/export?courseId=${id}" download>Export cards for Anki</a><label class="muted fl">Import from Anki <input type="file" id="ai2" accept=".txt,.tsv,.csv"></label></div></div>`;
  let mode="chat";
+ document.querySelectorAll(".tp").forEach(b=>b.onclick=()=>{$("#pr").value=cur.topics[+b.dataset.i];$("#pr").scrollIntoView({behavior:"smooth",block:"center"});$("#pr").focus()});
  $("#foc").onclick=()=>{T.courseId=id;saveT();go("focus")};
  const mt=$("#mt");mt.onchange=()=>{$("#fl").accept=mt.value==="photo"?"image/*":"";$("#ur").hidden=!["link","3d"].includes(mt.value)};
  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{mode=b.dataset.m;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
@@ -287,7 +319,7 @@ async function viewProgress(){
   <details><summary class="sm muted">Show as a table</summary><table class="ref"><thead><tr><th>Day</th><th>Focus (min)</th><th>Cards</th><th>Quiz answers</th></tr></thead><tbody>${p.daily.slice().reverse().map(d=>`<tr><td data-label="Day">${esc(dl(d.day))}</td><td data-label="Focus (min)">${Math.round(d.focusSec/60)}</td><td data-label="Cards">${d.cards}</td><td data-label="Quiz answers">${d.quiz}</td></tr>`).join("")}</tbody></table></details></div>
  <div class="card"><h3>Mastery by course</h3>
   <details><summary class="sm muted">How is mastery worked out?</summary><p class="sm muted">It is the average of two things: how many of your last 100 quiz answers in that course were right, and how many of its flashcards you now remember for a week or longer. Each part only counts once there is enough data (5 quiz answers, 5 cards). It rises as you quiz yourself and keep up your flashcards.</p></details>
-  ${[1,2,3,4,5,6].map(y=>byYear(y).filter(hasData).length?`<h3 style="margin-top:14px">Year ${y}</h3>`+byYear(y).filter(hasData).map(mrow).join(""):"").join("")||'<p class="muted">Nothing yet. Take a quiz, add flashcards or run a focus session for a course and it will appear here.</p>'}
+  ${yrs().map(y=>byYear(y).filter(hasData).length?`<h3 style="margin-top:14px">Year ${y}</h3>`+byYear(y).filter(hasData).map(mrow).join(""):"").join("")||'<p class="muted">Nothing yet. Take a quiz, add flashcards or run a focus session for a course and it will appear here.</p>'}
   ${p.courses.some(c=>!hasData(c))?`<details style="margin-top:12px"><summary class="sm muted">Courses with no activity yet (${p.courses.filter(c=>!hasData(c)).length})</summary>${p.courses.filter(c=>!hasData(c)).map(c=>`<div><button class="lnk" data-c="${c.id}">${esc(c.title)}</button> <span class="muted sm">Year ${c.year}</span></div>`).join("")}</details>`:""}</div>
  <div class="card"><h3>Weakest topics</h3>${p.weak.map(s=>`<div>${esc(s.topic)} <span class="muted">${s.pct}% correct of ${s.n}</span></div>`).join("")||'<p class="muted">Take a quiz to see where you stand.</p>'}</div>`;
  document.querySelectorAll(".bar").forEach(b=>{const show=()=>{document.querySelectorAll(".bar").forEach(x=>x.classList.toggle("sel",x===b));$("#binfo").textContent=info(p.daily[+b.dataset.i])};b.onclick=show;b.onmouseenter=show;b.onfocus=show});
@@ -309,7 +341,7 @@ async function drawRecent(){const el=$("#recent");if(!el)return;
   el.innerHTML=list.slice(0,8).map(s=>`<div class="row" style="justify-content:space-between"><span>${esc(new Date(s.t).toLocaleString(undefined,{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}))} · <b>${fmtMin(s.seconds)}</b> <span class="muted">${esc(s.course)}</span></span><button class="d" data-sx="${s.id}">Remove</button></div>`).join("")||'<p class="muted">No sessions yet. Your first one will show here.</p>';
   el.querySelectorAll("[data-sx]").forEach(b=>b.onclick=async()=>{await api("/api/sessions/"+b.dataset.sx,{method:"DELETE"});drawRecent()})}catch{}}
 async function viewFocus(){
- const opts=[1,2,3,4,5,6].map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}" ${T.courseId===c.id?"selected":""}>${esc(c.title)}</option>`).join("")}</optgroup>`).join("");
+ const opts=yrs().map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}" ${T.courseId===c.id?"selected":""}>${esc(c.title)}</option>`).join("")}</optgroup>`).join("");
  $("#main").innerHTML=`<h2>Focus timer</h2>
  <div class="card center"><div class="phase" id="tph"></div><div class="big" id="tt">00:00</div><div class="meter"><i id="tbar" style="width:0"></i></div>
   <div class="row"><label class="muted">Studying <select id="tcourse"><option value="">No course</option>${opts}</select></label></div>
@@ -373,7 +405,7 @@ async function viewBackup(){
   cloudy?(h.storageOk===false?["Fix","Cloud storage is not working: "+(h.storageError||"unknown error")]:["OK","Cloud storage connected. Your data is saved online and is the same on every device you sign in on."])
    :h.vercel?["Fix","Cloud storage is not set up. See the README (Supabase steps)."]:["Note","Running in local mode: data is saved only on the computer running this app. Download a backup file regularly."],
   h.secretChanged?["OK","SECRET has been changed from the default."]:["Fix","SECRET is still the default. Set it to a long random value."],
-  h.aiKeySet?["OK","AI key is set (study help, flashcards, translation, presentations, photo notes)."]:["Fix","ANTHROPIC_API_KEY is not set, so the AI features will not work."],
+  h.aiKeySet?["OK","AI is on via "+({gemini:"Google Gemini",groq:"Groq",openai:"your AI service",anthropic:"Anthropic"}[h.aiProvider]||h.aiProvider)+" (study help, flashcards, translation, presentations, photo notes)."]:["Fix","No AI key is set. Add GEMINI_API_KEY (free from Google AI Studio) or GROQ_API_KEY (free from Groq), then redeploy."],
   ...(cloudy?[h.cronSecretSet?["OK","Nightly backup is switched on."]:["Note","CRON_SECRET is not set, so there is no nightly backup. A backup is still made the first time you open the app each day."]]:[])];
  const when=s=>new Date(s).toLocaleString(undefined,{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
  $("#main").innerHTML=`<h2>Backup and sync</h2>
