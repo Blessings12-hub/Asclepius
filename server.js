@@ -260,9 +260,10 @@ app.post("/api/outline/apply", wrap(async (req, res) => {
   const r = await mergeOutline(req.body.items); res.json({ added: r.added, updated: r.updated });
 }));
 app.get("/api/materials", wrap(async (req, res) => res.json(await docs.list("materials", { courseId: String(req.query.courseId || "-") }))));
+app.get("/api/atlas", wrap(async (req, res) => res.json((await docs.list("materials", {})).filter((m) => m.type === "image" && m.file).map((m) => ({ id: m.id, courseId: m.courseId, title: m.title, body: m.body, file: m.file })))));
 app.post("/api/materials", upload.single("file"), wrap(async (req, res) => {
   const { courseId, url = "", translate: tr } = req.body;
-  const type = ["note", "link", "3d", "photo", "file"].includes(req.body.type) ? req.body.type : "note";
+  const type = ["note", "link", "3d", "photo", "file", "image"].includes(req.body.type) ? req.body.type : "note";
   if (!(await getCourses()).some((c) => c.id === courseId)) throw bad("Pick a course first");
   let body = String(req.body.body || "").slice(0, 200000), file = "", fileName = "";
   if (req.file) { fileName = req.file.originalname; file = await keepUpload(req.file); }
@@ -277,7 +278,16 @@ app.post("/api/materials", upload.single("file"), wrap(async (req, res) => {
     if (file && /\.pdf$/i.test(fileName)) {
       // an unreadable PDF is still worth keeping: you can open it, just not search it
       try { body = (await pdf(await fileBytes(file, req.file))).text.slice(0, 60000); }
-      catch { body = ""; warning = "Saved, but the text inside this PDF could not be read, so it will not appear in search or study help."; }
+      catch { body = ""; }
+      if (body.trim().length < 40) {
+        // scanned PDF (no text layer): let Gemini read the pages (OCR), up to ~15 MB
+        const bytes = await fileBytes(file, req.file);
+        if (aiInfo().provider === "gemini" && bytes.length <= 15e6) {
+          try { body = (await claude("Transcribe all text in this PDF in reading order. Describe figures or tables briefly in square brackets. Keep medical terms exact. Output the text only.", "Read this scanned document.", 8000, { image: { mime: "application/pdf", data: bytes.toString("base64") } })).slice(0, 60000); }
+          catch (e) { warning = "Saved, but the scan could not be read (" + e.message + ")."; }
+        }
+        if (!body.trim() && !warning) warning = "Saved, but the text inside this PDF could not be read, so it will not appear in search or study help. Scanned PDFs need a Gemini key.";
+      }
     }
     if (tr === "1" && body) body = await translate(body);
   } catch (e) {
@@ -466,6 +476,67 @@ app.post("/api/pack/export", wrap(async (req, res) => {
 }));
 
 // ---- flashcards (spaced repetition) ----
+// FSRS-4.5 (default weights). grade 1 Again, 2 Hard, 3 Good, 4 Easy. Old cards are converted on their first review.
+const W = [0.4872, 1.4003, 3.7145, 13.8206, 5.1618, 1.2298, 0.8975, 0.031, 1.6474, 0.1367, 1.0461, 2.1072, 0.0793, 0.3246, 1.587, 0.2272, 2.8755];
+const clampD = (d) => Math.min(10, Math.max(1, d));
+function fsrs(c, g) {
+  const now = Date.now(), F = 19 / 81;
+  if (!c.stab) {
+    if (c.interval > 0) { c.stab = c.interval; c.diff = clampD(11 - (c.ease || 2.5) * 2); c.last = now - c.interval * 864e5; } // legacy card
+    else { c.stab = W[g - 1]; c.diff = clampD(W[4] - W[5] * (g - 3)); c.last = now; c.fsrsNew = 1; }
+  }
+  if (!c.fsrsNew) {
+    const t = Math.max(0, (now - (c.last || now)) / 864e5), R = Math.pow(1 + (F * t) / c.stab, -0.5);
+    const d0 = clampD(W[7] * W[4] + (1 - W[7]) * (c.diff - W[6] * (g - 3)));
+    if (g === 1) c.stab = Math.max(0.1, Math.min(c.stab, W[11] * Math.pow(c.diff, -W[12]) * (Math.pow(c.stab + 1, W[13]) - 1) * Math.exp(W[14] * (1 - R))));
+    else c.stab = c.stab * (1 + Math.exp(W[8]) * (11 - c.diff) * Math.pow(c.stab, -W[9]) * (Math.exp(W[10] * (1 - R)) - 1) * (g === 2 ? W[15] : 1) * (g === 4 ? W[16] : 1));
+    c.diff = d0;
+  }
+  delete c.fsrsNew; c.last = now;
+  if (g === 1) { c.interval = 0; c.due = now + 6e5; }
+  else { c.interval = Math.max(1, Math.round(c.stab)); c.due = now + c.interval * 864e5; }
+}
+// cloze cards: "The {{c1::femoral nerve}} supplies the quadriceps." -> one card per cloze number
+app.post("/api/cards/cloze", wrap(async (req, res) => {
+  const { courseId } = req.body, text = String(req.body.text || "").slice(0, 4000);
+  if (!(await getCourses()).some((c) => c.id === courseId)) throw bad("Pick a course first");
+  const re = /\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}/g, nums = [...new Set([...text.matchAll(re)].map((m) => m[1]))];
+  if (!nums.length) throw bad("Wrap the hidden words like {{c1::this}}");
+  const now = Date.now();
+  const cards = nums.map((n) => ({
+    id: id(), courseId, due: now, ease: 2.5, interval: 0,
+    front: text.replace(re, (m, k, a, h) => (k === n ? "[" + (h || "…") + "]" : a)),
+    back: text.replace(re, (m, k, a) => (k === n ? "**" + a + "**" : a)).replace(/\*\*/g, ""),
+  }));
+  cards.forEach((c, i) => { const a = [...text.matchAll(re)].filter((m) => m[1] === nums[i]).map((m) => m[2]).join(", "); c.back = a + "\n\n" + c.back; });
+  await docs.putMany("cards", cards); res.json({ added: cards.length });
+}));
+app.post("/api/cards/cloze-ai", wrap(async (req, res) => {
+  const { courseId, prompt = "" } = req.body;
+  const out = parseJSON(await claude('Return ONLY a JSON array of 12 cloze sentences for a medical student, each a string with one or two key terms wrapped like {{c1::term}} (use c1, c2 for separate blanks). One fact per sentence, from the materials when possible.', `Focus: ${prompt || "whole course"}\n\n${await context(courseId)}`, 4000));
+  if (!Array.isArray(out)) throw new Error("The AI answer was not in the expected format. Try again.");
+  let added = 0;
+  for (const t of out.filter((x) => typeof x === "string" && /\{\{c\d+::/.test(x))) {
+    const re = /\{\{c(\d+)::(.*?)\}\}/g, nums = [...new Set([...t.matchAll(re)].map((m) => m[1]))], now = Date.now();
+    await docs.putMany("cards", nums.map((n) => ({ id: id(), courseId, due: now, ease: 2.5, interval: 0, front: t.replace(re, (m, k, a) => (k === n ? "[…]" : a)), back: [...t.matchAll(re)].filter((m) => m[1] === n).map((m) => m[2]).join(", ") + "\n\n" + t.replace(re, "$2") })));
+    added += nums.length;
+  }
+  res.json({ added });
+}));
+// image-occlusion cards: boxes are {x,y,w,h} in percent of the image, each with a label
+app.post("/api/cards/occlude", wrap(async (req, res) => {
+  const { courseId, file, title = "" } = req.body, boxes = (Array.isArray(req.body.boxes) ? req.body.boxes : []).slice(0, 60);
+  if (!FILE_KEY.test(String(file))) throw bad("Bad image reference");
+  if (!(await getCourses()).some((c) => c.id === courseId)) throw bad("Pick a course first");
+  const num = (v) => Math.max(0, Math.min(100, +v || 0)), now = Date.now();
+  const cards = boxes.filter((b) => +b.w > 0 && +b.h > 0).map((b) => ({
+    id: id(), courseId, due: now, ease: 2.5, interval: 0, img: file,
+    box: { x: num(b.x), y: num(b.y), w: num(b.w), h: num(b.h) },
+    front: "Name the hidden structure" + (title ? " (" + String(title).slice(0, 80) + ")" : ""), back: String(b.label || "(no label)").slice(0, 200),
+  }));
+  if (!cards.length) throw bad("Draw at least one box");
+  await docs.putMany("cards", cards); res.json({ added: cards.length });
+}));
 app.post("/api/cards/generate", wrap(async (req, res) => {
   const { courseId, prompt = "" } = req.body;
   const out = parseJSON(await claude('Return ONLY a JSON array of 15 flashcards [{"front":string,"back":string}] for a medical student. Short, one fact per card, from the materials when possible.', `Focus: ${prompt || "whole course"}\n\n${await context(courseId)}`, 5000));
@@ -484,11 +555,7 @@ app.post("/api/cards/:id/review", wrap(async (req, res) => {
   const rid = String(req.body.rid || "").slice(0, 40);
   if (rid && c.lastRid === rid) return res.json({ ok: 1, duplicate: 1 });
   if (rid) c.lastRid = rid;
-  if (g === 0) { c.ease = Math.max(1.3, c.ease - 0.2); c.interval = 0; c.due = Date.now() + 6e5; }
-  else {
-    c.interval = c.interval ? Math.round(c.interval * c.ease * [0, 0.8, 1, 1.3][g]) || 1 : [0, 1, 2, 4][g];
-    c.ease = Math.max(1.3, c.ease + [0, -0.1, 0, 0.1][g]); c.due = Date.now() + c.interval * 864e5;
-  }
+  fsrs(c, g + 1);
   c.reviews = (c.reviews || 0) + 1;
   await Promise.all([docs.put("cards", c), bump(dayOf(req.body.day), "cards")]);
   res.json({ ok: 1 });
@@ -514,6 +581,32 @@ const weakTopics = (results) => {
   return Object.values(t).filter((x) => x.n >= 2).map((x) => ({ ...x, pct: Math.round((100 * x.ok) / x.n) })).sort((a, b) => a.pct - b.pct).slice(0, 8);
 };
 app.get("/api/stats", wrap(async (q, res) => res.json(weakTopics(await kv.get("results", [])))));
+
+// ---- concept map + mnemonics ----
+app.post("/api/map", wrap(async (req, res) => {
+  const { courseId, prompt = "" } = req.body;
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  const raw = await claude('Return ONLY JSON {"center":string,"branches":[{"label":string,"items":[3-5 short strings],"mnemonic":"a memorable mnemonic or empty string"}]} - a concept map with 5-7 branches for a medical student. Plain text, short labels (max 6 words).', `Topic: ${prompt || course?.title}\n\n${await context(courseId)}`, 3000, { json: true });
+  res.json(parseJSON(raw));
+}));
+// ---- anatomy 3D: public Sketchfab search (no key needed) + structure explainer ----
+app.get("/api/anatomy/search", wrap(async (req, res) => {
+  const q = String(req.query.q || "human skeleton").slice(0, 80);
+  let r;
+  try { r = await fetch("https://api.sketchfab.com/v3/search?type=models&count=24&sort_by=-likeCount&q=" + encodeURIComponent(q + " anatomy"), { signal: AbortSignal.timeout(15000) }); }
+  catch { throw bad("Could not reach Sketchfab. Check your connection and try again.", 502); }
+  if (!r.ok) throw bad("Sketchfab search failed (" + r.status + ")", 502);
+  const j = await r.json();
+  res.json((j.results || []).map((m) => {
+    const imgs = (m.thumbnails?.images || []).slice().sort((a, b) => a.width - b.width);
+    return { uid: m.uid, name: m.name, by: m.user?.displayName || m.user?.username || "", thumb: (imgs.find((i) => i.width >= 200) || imgs[imgs.length - 1] || {}).url || "", license: m.license?.label || m.license || "", faces: m.faceCount || 0 };
+  }).filter((m) => /^[a-f0-9]{32}$/.test(m.uid)));
+}));
+app.post("/api/anatomy/explain", wrap(async (req, res) => {
+  const part = String(req.body.part || "").slice(0, 120);
+  if (!part) throw bad("Pick a structure first");
+  res.json({ text: await claude(`You are an anatomy tutor for a medical student. ${CHAT_RULES} Cover where it is, attachments (origin/insertion for muscles), relations, nerve supply, blood supply, function, and one clinical point. Flag anything uncertain.`, "Structure: " + part, 900) });
+}));
 
 // ---- practice: timed mock exam, OSCE stations, patient simulator ----
 app.post("/api/mock", wrap(async (req, res) => {

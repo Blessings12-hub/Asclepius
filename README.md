@@ -15,6 +15,16 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 0.8:
+
+- **Anatomy 3D** (new menu item): searches Sketchfab's public library (no key needed) for skeleton, skull, spine, muscles, heart, brain, nerves, organs and more. In the viewer you can hide parts to peel layers, tap a part to name it and get an AI explanation (attachments, nerve and blood supply, clinical point), take a 3D location quiz, and save the model to any course as a 3D lesson. Model credit and licence are shown; keep them. Parts lists and quizzes only work on models whose parts are named. Other free sources (Z-Anatomy, BodyParts3D, NIH 3D, Smithsonian 3D) are linked there: download a .glb and add it to a course
+- **Image atlas**: keep your own histology slides, ECGs, X-rays and diagrams by course, with labels and search. Press Occlusion cards on any image, drag boxes over the labels, and each box becomes a flashcard (the box hides the structure on the front and is outlined on the back)
+- **Cloze cards**: write {{c1::hidden words}} or let the AI write them. Each hidden word becomes its own card
+- **FSRS scheduling** replaces the old SM-2 intervals for all flashcards. Cards you already have are converted the first time you review them
+- **Scanned PDFs**: PDFs with no text layer are read by Gemini (OCR) when you upload them, up to about 15 MB. Needs a Gemini key
+- **Concept map** (Practice): a radial map of a topic with memory aids, saved to your notes if you like
+- **Listen**: a button on study guides reads them aloud using your device's voice
+
 New in 0.7:
 
 - **5-year MBChB layout** (reference: Lusaka Apex Medical University, 5 years, then internship). Year 6 is gone: any old Year 6 courses move into Year 5 once, keeping their materials, cards and progress. About 25 new courses were added across years 1 to 5 (Neuroscience, Cardiology, Pulmonology, Gastroenterology, Nephrology, Haematology, Rheumatology, Geriatrics, Urology, Neurosurgery, Paediatric Surgery, Cardiothoracic Surgery, Palliative Care, ECG & Imaging, Clinical Research Project and more). The university does not publish its year-by-year course list, so this is a typical Zambian layout: use Course outline to match your handbook
