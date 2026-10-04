@@ -1,5 +1,5 @@
 // Asclepius service worker: lets the app open and show what you used before, even with no signal.
-const SHELL = "asclepius-shell-v9", DATA = "asclepius-data-v9";
+const SHELL = "asclepius-shell-v10", DATA = "asclepius-data-v10";
 const PRECACHE = ["/", "/manifest.json", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/404.html"];
 const NEVER = /^\/api\/(backup|anki|health|cron|login|logout)/; // never stored: exports, backups, status, sign-in
 const BIG = 15 * 1024 * 1024; // do not keep uploaded files larger than this
@@ -47,6 +47,8 @@ self.addEventListener("fetch", (e) => {
   if (u.origin !== location.origin) {
     // the 3D viewer script, so lessons with models still open offline
     if (u.hostname === "cdnjs.cloudflare.com") e.respondWith(staleWhileRevalidate(r, SHELL));
+    // saved microscopy / ECG / imaging slides: keep the picture for offline study
+    if (u.hostname === "upload.wikimedia.org") e.respondWith(caches.open(DATA).then((c) => c.match(r).then((hit) => hit || fetch(r).then((res) => { if (res.ok || res.type === "opaque") c.put(r, res.clone()); return res; }).catch(() => Response.error()))));
     return;
   }
   if (NEVER.test(u.pathname)) return;
