@@ -248,8 +248,8 @@ function icsFile(time){const[h,m]=time.split(":"),d=new Date(),p=n=>String(n).pa
 
 /* ---------- navigation ---------- */
 const yrs=()=>Array.from({length:Math.max(5,...courses.map(c=>+c.year||1))},(_,i)=>i+1);
-const VIEWS={outline:()=>viewOutline(),today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
-const TITLES={today:"Today",outline:"Course outline",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
+const VIEWS={practice:()=>viewPractice(),outline:()=>viewOutline(),today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
+const TITLES={today:"Today",practice:"Practice",outline:"Course outline",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
 function go(v){view=v;cur=null;drawNav();$("#crumb").textContent=TITLES[v];VIEWS[v]().catch(e=>{if(e.message!=="login")showErr(e,()=>go(v))})}
 async function init(){
  try{courses=await api("/api/courses")}catch(e){if(e.message!=="login"){$("#login").hidden=true;$("#app").hidden=false;$("#nav").innerHTML="";
@@ -484,6 +484,57 @@ async function viewSearch(){
  $("#sg").onclick=go2;$("#sq").onkeydown=e=>{if(e.key==="Enter")go2()}}
 
 /* ---------- today ---------- */
+/* ---- Practice: mock exam, OSCE, patient simulator, calculators ---- */
+let pTab="mock",pm=null,sim=null;
+const courseOpts=()=>yrs().map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}">${esc(c.title)}</option>`).join("")}</optgroup>`).join("");
+async function viewPractice(){courses=await api("/api/courses");
+ $("#main").innerHTML=`<h2>Practice</h2><div class="tabs">${[["mock","Mock exam"],["osce","OSCE station"],["sim","Patient simulator"],["calc","Calculators"]].map(([k,t])=>`<button data-t="${k}" class="${pTab===k?"on":""}">${t}</button>`).join("")}</div><div id="pbody"></div>`;
+ document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{pTab=b.dataset.t;viewPractice()});
+ ({mock:pMock,osce:pOsce,sim:pSim,calc:pCalc})[pTab]()}
+function pickRow(extra){return `<div class="row"><select id="pc">${courseOpts()}</select><input id="pp" placeholder="Topic (optional)">${extra||""}</div>`}
+function pMock(){$("#pbody").innerHTML=`<div class="card"><p class="muted sm">10 clinical-vignette questions, 90 seconds each. Wrong topics feed your weak-topic list.</p>${pickRow('<button class="p" id="pgo">Start</button>')}<div id="pq"></div></div>`;
+ $("#pgo").onclick=async()=>{const o=$("#pq");o.innerHTML="<p class='muted'>Writing questions…</p>";
+  try{const r=await post("/api/mock",{courseId:$("#pc").value,prompt:$("#pp").value,kind:"mcq"});pm={q:r.questions||[],i:0,ok:0,end:Date.now()+90000*(r.questions||[]).length,course:$("#pc").value};if(!pm.q.length)throw new Error("No questions came back. Try again.");mockQ()}catch(e){o.innerHTML=`<p class="err">${esc(e.message)}</p>`}}}
+function mockQ(){const o=$("#pq"),q=pm.q[pm.i];
+ if(!q){o.innerHTML=`<h3>Score: ${pm.ok} / ${pm.q.length}</h3><p class="muted">Your weak topics are updated. Add them to the planner from the Today page or the button below.</p><button id="pw">Plan revision for my weak topics</button> <span id="pwm" class="sm muted"></span>`;
+  $("#pw").onclick=async()=>{try{const r=await post("/api/plan/weak");$("#pwm").textContent=`Added ${r.added} planner item(s).`}catch(e){$("#pwm").textContent=e.message}};return}
+ const left=Math.max(0,Math.round((pm.end-Date.now())/1000));
+ o.innerHTML=`<p class="sm muted">Question ${pm.i+1} of ${pm.q.length} · time left ${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}</p><p>${esc(q.q)}</p>${q.options.map((t,k)=>`<button class="opt" data-k="${k}" style="display:block;width:100%;text-align:left;margin:4px 0">${"ABCDE"[k]}. ${esc(t)}</button>`).join("")}<div id="pf"></div>`;
+ o.querySelectorAll(".opt").forEach(b=>b.onclick=async()=>{const k=+b.dataset.k,good=k===+q.answer;pm.ok+=good;
+  o.querySelectorAll(".opt").forEach(x=>x.disabled=true);
+  $("#pf").innerHTML=`<p class="${good?"":"err"}"><b>${good?"Correct":"Not quite. Answer: "+"ABCDE"[q.answer]}</b> ${esc(q.why||"")}</p><button class="p" id="pn">${pm.i+1<pm.q.length?"Next":"Finish"}</button>`;
+  post("/api/results",{courseId:pm.course,topic:q.topic,correct:good,day:localDay()}).catch(()=>{});
+  $("#pn").onclick=()=>{pm.i++;mockQ()}})}
+function pOsce(){$("#pbody").innerHTML=`<div class="card"><p class="muted sm">One OSCE station with a marking checklist. Do it out loud first, then tick what you covered.</p>${pickRow('<button class="p" id="pgo">New station</button>')}<div id="po"></div></div>`;
+ $("#pgo").onclick=async()=>{const o=$("#po");o.innerHTML="<p class='muted'>Building station…</p>";
+  try{const {osce:s}=await post("/api/mock",{courseId:$("#pc").value,prompt:$("#pp").value,kind:"osce"});
+   o.innerHTML=`<h3>${esc(s.station)}</h3><p>${esc(s.scenario)}</p><p><b>Task:</b> ${esc(s.task)}</p>${(s.checklist||[]).map((c,i)=>`<label style="display:block;margin:4px 0"><input type="checkbox" class="ck"> ${esc(c)}</label>`).join("")}<p id="osc" class="muted"></p>${(s.pitfalls||[]).length?`<p class="sm"><b>Common mistakes:</b> ${s.pitfalls.map(esc).join("; ")}</p>`:""}`;
+   const upd=()=>{const a=[...o.querySelectorAll(".ck")];$("#osc").textContent=`${a.filter(x=>x.checked).length} of ${a.length} points`};o.querySelectorAll(".ck").forEach(c=>c.onchange=upd);upd()}catch(e){o.innerHTML=`<p class="err">${esc(e.message)}</p>`}}}
+function pSim(){$("#pbody").innerHTML=`<div class="card"><p class="muted sm">Take a history, ask to examine or order tests (the patient answers in [brackets]). Start a message with "Diagnosis:" to end the case and get feedback.</p>${pickRow('<button class="p" id="pgo">New patient</button>')}<div id="sl" style="margin-top:8px"></div><div class="row"><input id="si" placeholder="Ask the patient…" style="flex:1" disabled><button id="ss" disabled>Send</button></div></div>`;
+ const draw=()=>{$("#sl").innerHTML=sim.log.map(m=>`<p class="sm"><b>${m.who==="me"?"You":"Patient"}:</b> ${esc(m.text)}</p>`).join("");};
+ const send=async()=>{const t=$("#si").value.trim();if(!t||!sim)return;$("#si").value="";sim.log.push({who:"me",text:t});draw();$("#ss").disabled=true;
+  try{const r=await post("/api/sim",{courseId:sim.course,hidden:sim.hidden,log:sim.log.slice(0,-1),say:t});sim.log.push({who:"pt",text:r.reply})}catch(e){sim.log.push({who:"pt",text:"(error: "+e.message+")"})}draw();$("#ss").disabled=false};
+ $("#ss").onclick=send;$("#si").onkeydown=e=>{if(e.key==="Enter")send()};
+ $("#pgo").onclick=async()=>{$("#sl").innerHTML="<p class='muted'>Finding a patient…</p>";
+  try{const course=$("#pc").value,r=await post("/api/sim",{courseId:course,say:$("#pp").value});sim={course,hidden:r.case,log:[{who:"pt",text:r.opening}]};draw();$("#si").disabled=false;$("#ss").disabled=false}catch(e){$("#sl").innerHTML=`<p class="err">${esc(e.message)}</p>`}}}
+const CALCS=[
+ {t:"GCS",f:[["Eye",[["4 Spontaneous",4],["3 To voice",3],["2 To pain",2],["1 None",1]]],["Verbal",[["5 Oriented",5],["4 Confused",4],["3 Words",3],["2 Sounds",2],["1 None",1]]],["Motor",[["6 Obeys",6],["5 Localises",5],["4 Withdraws",4],["3 Flexion",3],["2 Extension",2],["1 None",1]]]],r:v=>`GCS ${v[0]+v[1]+v[2]} (E${v[0]} V${v[1]} M${v[2]}). 8 or less: protect the airway.`},
+ {t:"CURB-65",c:["Confusion","Urea above 7 mmol/L","Respiratory rate 30 or more","BP systolic below 90 or diastolic 60 or less","Age 65 or more"],r:n=>`Score ${n}. ${n<=1?"Low risk, usually home treatment.":n==2?"Moderate risk, consider admission.":"High risk, urgent admission; consider ICU at 4 to 5."}`},
+ {t:"CHA\u2082DS\u2082-VASc",c:["Heart failure (1)","Hypertension (1)","Age 75 or more (2)","Diabetes (1)","Stroke/TIA/embolism (2)","Vascular disease (1)","Age 65 to 74 (1)","Female (1)"],w:[1,1,2,1,2,1,1,1],r:n=>`Score ${n}. Higher scores raise stroke risk; anticoagulation is usually considered from 2 in men and 3 in women. Check your guideline.`},
+ {t:"Wells (PE)",c:["Signs of DVT (3)","PE most likely diagnosis (3)","Heart rate above 100 (1.5)","Immobilised 3 days+ or surgery in 4 weeks (1.5)","Previous DVT/PE (1.5)","Haemoptysis (1)","Cancer (1)"],w:[3,3,1.5,1.5,1.5,1,1],r:n=>`Score ${n}. ${n>6?"High":n>=2?"Moderate":"Low"} probability (three-tier). Two-tier: ${n>4?"PE likely":"PE unlikely"}.`},
+ {t:"Anion gap",n:[["Na (mmol/L)"],["Cl (mmol/L)"],["HCO3 (mmol/L)"]],r:v=>{const g=v[0]-(v[1]+v[2]);return `Anion gap ${g.toFixed(1)} mmol/L. Typical range is about 8 to 12 (lab dependent); a raised gap suggests a high-gap metabolic acidosis.`}},
+ {t:"Corrected calcium",n:[["Calcium (mmol/L)"],["Albumin (g/L)"]],r:v=>`Corrected calcium ${(v[0]+0.02*(40-v[1])).toFixed(2)} mmol/L.`},
+ {t:"eGFR (CKD-EPI 2021)",n:[["Creatinine (\u00b5mol/L)"],["Age (years)"]],s:1,r:(v,f)=>{const k=f?0.7:0.9,a=f?-0.241:-0.302,sc=v[0]/88.4;return `eGFR about ${Math.round(142*Math.pow(Math.min(sc/k,1),a)*Math.pow(Math.max(sc/k,1),-1.2)*Math.pow(0.9938,v[1])*(f?1.012:1))} mL/min/1.73 m\u00b2. Not valid in acute kidney injury.`}}];
+function pCalc(){$("#pbody").innerHTML=CALCS.map((c,i)=>`<details class="card"><summary><b>${c.t}</b></summary><div data-i="${i}">${
+ c.f?c.f.map(([l,o],j)=>`<label class="sm">${l} <select data-f="${j}">${o.map(([t,v])=>`<option value="${v}">${t}</option>`).join("")}</select></label>`).join("<br>"):
+ c.c?c.c.map((t,j)=>`<label style="display:block"><input type="checkbox" data-c="${j}"> ${t}</label>`).join(""):
+ c.n.map(([l],j)=>`<label class="sm">${l} <input type="number" step="any" data-n="${j}" style="width:90px"></label>`).join("<br>")}${c.s?'<label class="sm"><input type="checkbox" data-sex> Female</label>':""}
+ <p class="out"><b></b></p></div></details>`).join("")+`<p class="muted sm">For study only. Check every result against your own guidelines before it informs care.</p>`;
+ document.querySelectorAll("[data-i]").forEach(d=>{const c=CALCS[+d.dataset.i],o=d.querySelector(".out b");const run=()=>{let v;
+  if(c.f)v=[...d.querySelectorAll("select")].map(s=>+s.value);
+  else if(c.c){const b=[...d.querySelectorAll("[data-c]")];v=b.reduce((n,x,j)=>n+(x.checked?(c.w?c.w[j]:1):0),0)}
+  else{v=[...d.querySelectorAll("[data-n]")].map(x=>parseFloat(x.value));if(v.some(isNaN)){o.textContent="";return}}
+  o.textContent=c.r(v,!!d.querySelector("[data-sex]:checked"))};d.addEventListener("input",run);d.addEventListener("change",run);run()})}
 async function viewToday(){
  const [due,plan,stats,sum]=await Promise.all([api("/api/cards/due"),api("/api/plan"),api("/api/stats"),api("/api/summary?day="+localDay())]);
  const mins=Math.round((sum.today.focusSec||0)/60),st=sum.streak;
