@@ -15,6 +15,20 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 1.0:
+
+- **Exams and auto-timetable** (Focus timer page): add exam dates; "Build my timetable" shares your daily study blocks by how close each exam is and how weak your quiz answers are, with breaks
+- **Past papers** (Practice): paste a paper (or pick a saved material, e.g. a photo of a paper) and get each question with a model answer in the Question bank, plus a chart of topics that repeat
+- **Predict exam questions** (Question bank): paste lecture slides or notes and get likely exam questions with hidden answers
+- **Logbook** (Practice): procedures by level (observed, assisted, supervised, independent) against editable targets. The starter targets are examples, not your school's official numbers. Patient names and ID or phone numbers are refused
+- **Differential trainer**, **Case presenter** and **Lecture recorder** (Practice). The recorder sends 4-minute chunks to Gemini for transcription (needs a Gemini key), then makes notes and flashcards
+- **ECG trainer** and **Imaging trainer** (new menu items): the same find, save, quiz and AI-problems flow as Microscopy, for ECGs, X-rays, CT and ultrasound
+- **Label quiz** on Image atlas pictures: draw boxes in Occlusion cards, press Save for label quiz, then type the names
+- **Calculators**: child weight, tube size and fluid estimates, and a dose-by-weight calculator (arithmetic only; you enter the dose from your guideline)
+- **Zambian guidelines links** at the top of the Drug and lab reference page
+- **Settings and tools** (new menu item): text size, daily card limit, screen lock PIN, offline pack, Anki .apkg export and import (Node 22.5 or newer on the server), and a 26-week study heatmap (also on the Progress page)
+- Fixes a crash in the Question bank tab from version 0.9
+
 New in 0.9:
 
 - **Alarm and timetable** (Focus timer page): pick an alarm tone (bell, chime, digital, siren), volume, and whether it keeps ringing until you press Stop. Build a daily timetable of study blocks, breaks and meals with from and to times, per weekday, or use Quick fill to generate study blocks with breaks. The alarm rings at the start of every block while the app is open, and when a focus session or break ends. "Add to phone alarms" downloads a .ics file that repeats weekly in your phone calendar, which also rings when the app is closed

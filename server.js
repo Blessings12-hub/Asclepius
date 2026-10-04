@@ -54,7 +54,7 @@ async function getCourses() {
   }
   return c;
 }
-const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120, reminderTime: "" };
+const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120, reminderTime: "", cardLimit: 0 };
 const getSettings = async () => ({ ...DEFAULTS, ...(await kv.get("settings", {})) });
 async function getRefs() {
   let r = await kv.get("refs", null);
@@ -260,7 +260,7 @@ app.post("/api/outline/apply", wrap(async (req, res) => {
   const r = await mergeOutline(req.body.items); res.json({ added: r.added, updated: r.updated });
 }));
 app.get("/api/materials", wrap(async (req, res) => res.json(await docs.list("materials", { courseId: String(req.query.courseId || "-") }))));
-app.get("/api/atlas", wrap(async (req, res) => res.json((await docs.list("materials", {})).filter((m) => m.type === "image" && m.file).map((m) => ({ id: m.id, courseId: m.courseId, title: m.title, body: m.body, file: m.file })))));
+app.get("/api/atlas", wrap(async (req, res) => res.json((await docs.list("materials", {})).filter((m) => m.type === "image" && m.file).map((m) => ({ id: m.id, courseId: m.courseId, title: m.title, body: m.body, file: m.file, boxes: m.boxes || [] })))));
 app.post("/api/materials", upload.single("file"), wrap(async (req, res) => {
   const { courseId, url = "", translate: tr } = req.body;
   const type = ["note", "link", "3d", "photo", "file", "image"].includes(req.body.type) ? req.body.type : "note";
@@ -546,8 +546,25 @@ app.post("/api/cards/generate", wrap(async (req, res) => {
   await docs.putMany("cards", cards);
   res.json({ added: cards.length });
 }));
-app.get("/api/cards/due", wrap(async (q, res) => res.json(await docs.list("cards", { numLte: Date.now(), sortNum: true, limit: 50 }))));
-app.get("/api/cards/count", wrap(async (q, res) => res.json({ due: (await docs.list("cards", { numLte: Date.now(), project: ["due"] })).length })));
+// daily review limit (0 = no limit): reviews done today count against it
+async function cardsLeftToday(day) {
+  const lim = (await getSettings()).cardLimit || 0;
+  if (!lim) return Infinity;
+  return Math.max(0, lim - ((await kv.get("days", {}))[dayOf(day)]?.cards || 0));
+}
+app.get("/api/cards/due", wrap(async (q, res) => {
+  const left = await cardsLeftToday(q.query.day), list = await docs.list("cards", { numLte: Date.now(), sortNum: true, limit: 50 });
+  res.json(list.slice(0, left));
+}));
+app.get("/api/cards/count", wrap(async (q, res) => {
+  const left = await cardsLeftToday(q.query.day), n = (await docs.list("cards", { numLte: Date.now(), project: ["due"] })).length;
+  res.json({ due: Math.min(n, left), total: n });
+}));
+app.get("/api/heatmap", wrap(async (q, res) => {
+  const days = await kv.get("days", {}), t = dnum(dayOf(q.query.day)), out = {};
+  for (let i = 0; i < 182; i++) { const d = dstr(t - i), v = days[d]; if (v) out[d] = { focusSec: v.focusSec || 0, cards: v.cards || 0, quiz: v.quiz || 0 }; }
+  res.json(out);
+}));
 app.post("/api/cards/:id/review", wrap(async (req, res) => {
   const c = await docs.get("cards", req.params.id), g = +req.body.grade;
   if (!c) throw bad("No such card", 404);
@@ -596,14 +613,14 @@ app.put("/api/timetable", wrap(async (req, res) => {
 }));
 
 // ---- question bank: clinical cases, lab interpretation, viva, practical (answers hidden until revealed) ----
-const QKINDS = { case: "clinical case questions (a short vignette, then a question needing diagnosis, next step or management reasoning)", lab: "lab and investigation interpretation questions (give realistic values with units, ask what they show, the likely cause and what to do next; state the reference ranges you rely on)", viva: "oral-exam (viva) questions with a model answer a student could say in about a minute", practical: "practical-exam questions (identify, describe, explain or compare, as set in practical exams for this subject)" };
+const QKINDS = { case: "clinical case questions (a short vignette, then a question needing diagnosis, next step or management reasoning)", lab: "lab and investigation interpretation questions (give realistic values with units, ask what they show, the likely cause and what to do next; state the reference ranges you rely on)", viva: "oral-exam (viva) questions with a model answer a student could say in about a minute", predicted: "questions most likely to be asked in the exam on THIS material (mix of short-answer and essay prompts; favour what the material stresses)", paper: "exam questions", practical: "practical-exam questions (identify, describe, explain or compare, as set in practical exams for this subject)" };
 app.get("/api/qbank", wrap(async (req, res) => res.json(await docs.list("qbank", req.query.courseId ? { courseId: String(req.query.courseId) } : {}))));
 app.post("/api/qbank/generate", wrap(async (req, res) => {
   const { courseId, kind = "case", prompt = "" } = req.body, count = Math.min(12, Math.max(3, +req.body.count || 8));
   const course = (await getCourses()).find((c) => c.id === courseId);
   if (!course) throw bad("Pick a course first");
   if (!QKINDS[kind]) throw bad("Unknown question type");
-  const raw = await claude(`Return ONLY a JSON array of ${count} ${QKINDS[kind]} for a medical student studying "${course.title}" in a Zambian MBChB. Each item: {"topic":string (2-4 words),"q":string,"a":string (complete model answer: the key points, a short reason, and the usual next step if clinical)}. Plain text, no Markdown. Vary the topics. Do not invent facts: if a value or detail is uncertain, leave it out.`, `Focus: ${prompt || "the whole course"}\n\n${await context(courseId)}`, 7000);
+  const raw = await claude(`Return ONLY a JSON array of ${count} ${QKINDS[kind]} for a medical student studying "${course.title}" in a Zambian MBChB. Each item: {"topic":string (2-4 words),"q":string,"a":string (complete model answer: the key points, a short reason, and the usual next step if clinical)}. Plain text, no Markdown. Vary the topics. Do not invent facts: if a value or detail is uncertain, leave it out.`, `Focus: ${prompt || "the whole course"}\n\n${req.body.text ? "SOURCE MATERIAL:\n" + String(req.body.text).slice(0, 14000) : await context(courseId)}`, 7000);
   const list = parseJSON(raw);
   if (!Array.isArray(list)) throw new Error("The AI answer was not in the expected format. Try again.");
   const items = list.filter((x) => x && x.q && x.a).map((x) => ({ id: id(), courseId, kind, topic: String(x.topic || "").slice(0, 60), q: String(x.q).slice(0, 1500), a: String(x.a).slice(0, 2500), at: Date.now() }));
@@ -619,7 +636,7 @@ app.post("/api/slides", wrap(async (req, res) => {
   const b = req.body;
   if (!COMMONS.test(String(b.thumb))) throw bad("Only Wikimedia Commons images can be saved here");
   if (!(await getCourses()).some((c) => c.id === b.courseId)) throw bad("Pick a course first");
-  const sl = { id: id(), courseId: b.courseId, title: String(b.title || "Slide").slice(0, 200), thumb: String(b.thumb).slice(0, 500), page: String(b.page || "").slice(0, 500), desc: String(b.desc || "").slice(0, 600), credit: String(b.credit || "").slice(0, 200), license: String(b.license || "").slice(0, 80), at: Date.now() };
+  const sl = { id: id(), courseId: b.courseId, title: String(b.title || "Slide").slice(0, 200), thumb: String(b.thumb).slice(0, 500), page: String(b.page || "").slice(0, 500), set: ["micro", "ecg", "rad"].includes(b.set) ? b.set : "micro", desc: String(b.desc || "").slice(0, 600), credit: String(b.credit || "").slice(0, 200), license: String(b.license || "").slice(0, 80), at: Date.now() };
   await docs.put("slides", sl); res.json(sl);
 }));
 app.delete("/api/slides/:id", wrap(async (req, res) => { await docs.del("slides", req.params.id); res.json({ ok: 1 }); }));
@@ -627,7 +644,8 @@ app.post("/api/slides/:id/ask", wrap(async (req, res) => {
   const sl = await docs.get("slides", req.params.id);
   if (!sl) throw bad("Slide not found", 404);
   const trusted = `Trusted file title: ${sl.title}\nTrusted description: ${sl.desc || "(none)"}`;
-  const sys = 'You are a histology and pathology tutor. Return ONLY JSON {"what":string (what the slide shows, using the trusted title as ground truth),"stain":string or "unknown","features":[3-6 short things to look for],"questions":[4 items {"q":string,"a":string}: identify the tissue or lesion, name the stain or technique, describe key features, give the diagnosis or function and one clinical link],"sure":true or false}. Plain text. Never contradict the trusted title; if you cannot see something, say so and set sure to false.';
+  const FOCUS = { ecg: "You are an ECG tutor. Use a systematic approach: rate, rhythm, axis, P waves, PR interval, QRS, ST segment, T waves, QT. 'stain' should be 'ECG'.", rad: "You are a radiology tutor. Use a systematic approach (technical quality, then ABCDE or the relevant system) and describe findings before diagnosing. 'stain' should be the imaging modality.", micro: "You are a histology and pathology tutor." }[sl.set || "micro"];
+  const sys = FOCUS + ' Return ONLY JSON {"what":string (what the slide shows, using the trusted title as ground truth),"stain":string (stain, technique or modality, or "unknown"),"features":[3-6 short things to look for or look at],"questions":[4 items {"q":string,"a":string}: identify the tissue or lesion, name the stain or technique, describe key features, give the diagnosis or function and one clinical link],"sure":true or false}. Plain text. Never contradict the trusted title; if you cannot see something, say so and set sure to false.';
   let raw, seen = false;
   if (aiInfo().provider === "gemini" && COMMONS.test(sl.thumb)) {
     try {
@@ -639,6 +657,188 @@ app.post("/api/slides/:id/ask", wrap(async (req, res) => {
   if (!raw) raw = await claude(sys + " You cannot see the image, so base everything on the trusted title and description and set sure to false.", trusted, 2500, { json: true });
   const qa = parseJSON(raw); qa.seen = seen;
   sl.qa = qa; await docs.put("slides", sl); res.json(sl);
+}));
+
+// ---- exams, countdown and auto-timetable ----
+app.get("/api/exams", wrap(async (q, res) => res.json((await kv.get("exams", [])).sort((a, b) => a.date.localeCompare(b.date)))));
+app.post("/api/exams", wrap(async (req, res) => {
+  const { courseId, date, title = "" } = req.body;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw bad("Pick the exam date");
+  const ex = await kv.get("exams", []);
+  ex.push({ id: id(), courseId: String(courseId || "").slice(0, 60), date, title: String(title).slice(0, 80) });
+  await kv.set("exams", ex.slice(-60)); res.json({ ok: 1 });
+}));
+app.delete("/api/exams/:id", wrap(async (req, res) => { await kv.set("exams", (await kv.get("exams", [])).filter((e) => e.id !== req.params.id)); res.json({ ok: 1 }); }));
+// builds one daily template: study blocks shared out by how close each exam is and how weak you are, with breaks between
+app.post("/api/exams/autoplan", wrap(async (req, res) => {
+  const hm = /^([01]\d|2[0-3]):[0-5]\d$/, from = String(req.body.from || "08:00"), to = String(req.body.to || "16:00");
+  const S = Math.min(120, Math.max(15, +req.body.study || 50)), R = Math.min(60, Math.max(0, req.body.brk === undefined || req.body.brk === "" ? 10 : +req.body.brk));
+  if (!hm.test(from) || !hm.test(to) || to <= from) throw bad("Check the start and end times");
+  const day = dayOf(req.body.day), today = dnum(day), courses = await getCourses(), results = await kv.get("results", []);
+  const exams = (await kv.get("exams", [])).filter((e) => dnum(e.date) >= today && courses.some((c) => c.id === e.courseId));
+  if (!exams.length) throw bad("Add at least one upcoming exam with a course first");
+  const toM = (v) => +v.slice(0, 2) * 60 + +v.slice(3), fm = (m) => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+  const slots = []; for (let m = toM(from); m + S <= toM(to); m += S + R) slots.push(m);
+  if (!slots.length) throw bad("That window is too short for one study block");
+  const rank = exams.map((e) => {
+    const left = Math.max(1, dnum(e.date) - today), rs = results.filter((r) => r.courseId === e.courseId).slice(-60);
+    const weak = rs.length >= 5 ? 1 - rs.filter((r) => r.correct).length / rs.length : 0.5;
+    const byTopic = {}; rs.forEach((r) => { byTopic[r.topic] ||= { n: 0, ok: 0 }; byTopic[r.topic].n++; byTopic[r.topic].ok += r.correct; });
+    const worst = Object.entries(byTopic).filter(([, v]) => v.n >= 2).sort((a, b) => a[1].ok / a[1].n - b[1].ok / b[1].n)[0];
+    return { e, w: (1 / Math.sqrt(left)) * (0.5 + weak), worst: worst && worst[0], left };
+  });
+  const tot = rank.reduce((a, r) => a + r.w, 0); let alloc = rank.map((r) => ({ ...r, n: Math.floor((slots.length * r.w) / tot) }));
+  let rest = slots.length - alloc.reduce((a, r) => a + r.n, 0);
+  [...alloc].sort((a, b) => b.w / tot * slots.length - b.n - (a.w / tot * slots.length - a.n)).forEach((r) => { if (rest > 0) { r.n++; rest--; } });
+  alloc = alloc.filter((r) => r.n > 0).sort((a, b) => a.left - b.left);
+  const order = []; alloc.forEach((r) => { for (let i = 0; i < r.n; i++) order.push(r); });
+  const blocks = [];
+  slots.forEach((m, i) => {
+    const r = order[i], c = courses.find((x) => x.id === r.e.courseId);
+    blocks.push({ id: id(), start: fm(m), end: fm(m + S), kind: "study", title: `Revise ${c.title}${r.worst && i % 2 === 0 ? ": " + r.worst : ""}`.slice(0, 80), courseId: c.id, days: [0, 1, 2, 3, 4, 5, 6] });
+    if (R && i < slots.length - 1) blocks.push({ id: id(), start: fm(m + S), end: fm(m + S + R), kind: "break", title: "Break", courseId: "", days: [0, 1, 2, 3, 4, 5, 6] });
+  });
+  await kv.set("timetable", blocks);
+  res.json({ blocks, summary: alloc.map((r) => `${courses.find((c) => c.id === r.e.courseId).title}: ${r.n} block(s), exam in ${r.left} day(s)`) });
+}));
+
+// ---- past papers: pull out the questions, model answers and repeating topics ----
+app.post("/api/papers/analyze", wrap(async (req, res) => {
+  const { courseId, title = "" } = req.body, text = String(req.body.text || "").trim().slice(0, 14000);
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  if (!course) throw bad("Pick a course first");
+  if (text.length < 80) throw bad("Paste the paper's text (or pick a material that has text)");
+  const j = parseJSON(await claude('Return ONLY JSON {"questions":[{"topic":string (2-4 words),"q":string (the question as set),"a":string (a complete model answer with the key points a marker expects)}],"topics":[{"topic":string,"count":number}]} from this past exam paper. Include every question you can read (max 25). "topics" counts how many questions touch each topic. Do not invent questions that are not in the text. Plain text.', `Course: ${course.title}\n\n${text}`, 8000));
+  const qs = (j.questions || []).filter((x) => x && x.q && x.a).slice(0, 25);
+  if (!qs.length) throw new Error("No questions could be read from that text. Check the paste and try again.");
+  const paperId = id(), now = Date.now();
+  await docs.putMany("qbank", qs.map((x) => ({ id: id(), courseId, kind: "paper", topic: String(x.topic || "").slice(0, 60), q: String(x.q).slice(0, 1500), a: String(x.a).slice(0, 2500), at: now })));
+  await docs.put("papers", { id: paperId, courseId, title: String(title || "Past paper").slice(0, 100), topics: (j.topics || []).filter((t) => t && t.topic).slice(0, 25).map((t) => ({ topic: String(t.topic).slice(0, 60), count: Math.max(1, Math.round(+t.count || 1)) })), at: now });
+  res.json({ added: qs.length });
+}));
+app.get("/api/papers", wrap(async (req, res) => {
+  const list = await docs.list("papers", req.query.courseId ? { courseId: String(req.query.courseId) } : {}), freq = {};
+  list.forEach((p) => (p.topics || []).forEach((t) => { freq[t.topic.toLowerCase()] ||= { topic: t.topic, count: 0 }; freq[t.topic.toLowerCase()].count += t.count; }));
+  res.json({ papers: list.map((p) => ({ id: p.id, title: p.title, at: p.at })), topics: Object.values(freq).sort((a, b) => b.count - a.count).slice(0, 20) });
+}));
+
+// ---- clinical logbook (procedures and targets; never put patient details here) ----
+const LOG_DEFAULTS = { "IV cannulation": 10, "Venepuncture": 20, "Suturing": 10, "Urinary catheterisation": 5, "NG tube insertion": 5, "ECG recording": 10, "Normal delivery": 10, "Lumbar puncture": 2, "Arterial blood gas": 3, "BLS / CPR": 2, "Wound dressing": 10, "Blood transfusion set-up": 3, "Chest drain": 2, "Plaster / cast application": 2 };
+const LEVELS = ["observed", "assisted", "supervised", "independent"];
+app.get("/api/log", wrap(async (q, res) => res.json({ entries: (await kv.get("logbook", [])).sort((a, b) => b.date.localeCompare(a.date)), targets: await kv.get("logTargets", LOG_DEFAULTS), levels: LEVELS })));
+app.post("/api/log", wrap(async (req, res) => {
+  const b = req.body, procedure = String(b.procedure || "").trim().slice(0, 80), notes = String(b.notes || "").slice(0, 300);
+  if (!procedure) throw bad("Name the procedure");
+  if (!LEVELS.includes(b.level)) throw bad("Pick your level");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date))) throw bad("Pick the date");
+  if (/\d{6,}/.test(notes + procedure) || /\b(mr|mrs|ms|miss)\.?\s+[A-Z][a-z]+/.test(notes)) throw bad("Remove patient names and ID or phone numbers from the note. Keep the logbook anonymous.");
+  const log = await kv.get("logbook", []);
+  log.push({ id: id(), date: b.date, rotation: String(b.rotation || "").slice(0, 60), procedure, level: b.level, notes });
+  await kv.set("logbook", log.slice(-1500)); res.json({ ok: 1 });
+}));
+app.delete("/api/log/:id", wrap(async (req, res) => { await kv.set("logbook", (await kv.get("logbook", [])).filter((e) => e.id !== req.params.id)); res.json({ ok: 1 }); }));
+app.put("/api/log/targets", wrap(async (req, res) => {
+  const t = {}; Object.entries(req.body.targets || {}).slice(0, 60).forEach(([k, v]) => { if (k.trim() && +v >= 0 && +v <= 500) t[k.trim().slice(0, 80)] = Math.round(+v); });
+  await kv.set("logTargets", t); res.json(t);
+}));
+
+// ---- differential diagnosis trainer, case presenter ----
+app.post("/api/ddx", wrap(async (req, res) => {
+  const { courseId, symptom = "", student = "", answer } = req.body;
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  if (answer && student) {
+    return res.json({ feedback: await claude(`You are a clinical tutor. ${CHAT_RULES} Compare the student's differential with the model answer: what they got right, what they missed (especially anything dangerous), how they should order it, and the single best next step. Be kind and specific. Educational only.`, `Case: ${String(req.body.vignette).slice(0, 1500)}\nModel answer: ${JSON.stringify(answer).slice(0, 3000)}\nStudent differential: ${String(student).slice(0, 1500)}`, 900) });
+  }
+  const j = parseJSON(await claude('Return ONLY JSON {"vignette":string (age, sex, setting, presenting complaint and key history/exam/investigation findings, WITHOUT the diagnosis),"answer":{"final":string (most likely diagnosis),"differential":[{"dx":string,"for":string,"against":string}] (4-6),"cantMiss":[strings] (dangerous diagnoses to exclude),"tests":[strings],"first":string (immediate next step)}}. Plain text. Common presentations in Zambian hospitals are fine (malaria, TB, HIV, sickle cell, etc.) but keep it realistic.', `Student is studying: ${course?.title || "general medicine"}. Presenting symptom: ${String(symptom).slice(0, 100) || "choose a common one"}`, 2500, { json: true }));
+  res.json(j);
+}));
+app.post("/api/present", wrap(async (req, res) => {
+  const text = String(req.body.text || "").trim().slice(0, 5000);
+  if (text.length < 40) throw bad("Write or paste what you know about the patient first");
+  if (/\d{6,}/.test(text)) throw bad("Remove ID or phone numbers first. Use age and sex only, never a name.");
+  res.json({ text: await claude(`You coach medical students on case presentations. ${CHAT_RULES} Rewrite the student's notes as a spoken ward-round presentation in this order: one-line summary, presenting complaint, history of presenting complaint, relevant PMH/drugs/allergies/family/social, systems review, examination, investigations, assessment with differential, plan. Use ONLY facts the student gave; write "(not given)" for gaps, never invent findings. Then add "## Coaching" with 3-5 specific tips on wording, order and what a consultant would ask next. Educational only.`, text, 1800) });
+}));
+
+// ---- lecture recorder: audio -> transcript (Gemini) -> notes + flashcards ----
+const audioUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 18 * 1024 * 1024 } });
+app.post("/api/lecture/transcribe", audioUp.single("audio"), wrap(async (req, res) => {
+  if (aiInfo().provider !== "gemini") throw bad("Lecture transcription needs a Gemini key (GEMINI_API_KEY).");
+  if (!req.file) throw bad("No audio received");
+  const mime = (req.file.mimetype || "audio/webm").split(";")[0];
+  if (!/^audio\//.test(mime) && !/^video\/(webm|mp4)$/.test(mime)) throw bad("That is not an audio file");
+  const text = await claude("Transcribe this lecture recording faithfully in English (keep medical terms and drug names exact). If a speaker switches language, translate to English in brackets. Skip silence and noise. Output the transcript only, in paragraphs.", "Transcribe.", 8000, { image: { mime, data: req.file.buffer.toString("base64") } });
+  res.json({ text: text.trim() });
+}));
+app.post("/api/lecture/notes", wrap(async (req, res) => {
+  const { courseId } = req.body, text = String(req.body.text || "").trim().slice(0, 40000);
+  if (!(await getCourses()).some((c) => c.id === courseId)) throw bad("Pick a course first");
+  if (text.length < 100) throw bad("The transcript is too short to make notes from");
+  const j = parseJSON(await claude('Return ONLY JSON {"notes":string (clean lecture notes in Markdown: headings, bullets, **bold** key terms, a short summary at the top, a "Likely exam points" list at the end),"cards":[{"front":string,"back":string}] (12-20 flashcards of the key facts)}. Use only what the lecturer said; do not add facts.', text, 7000));
+  const now = Date.now(), cards = (j.cards || []).filter((x) => x && x.front && x.back).slice(0, 25).map((x) => ({ id: id(), courseId, due: now, ease: 2.5, interval: 0, front: String(x.front).slice(0, 400), back: String(x.back).slice(0, 800) }));
+  if (cards.length) await docs.putMany("cards", cards);
+  res.json({ notes: String(j.notes || ""), cards: cards.length });
+}));
+
+// ---- Anki .apkg export / import (basic cards; scheduling and media are not carried over) ----
+app.get("/api/anki/apkg", wrap(async (req, res) => {
+  let DatabaseSync; try { ({ DatabaseSync } = await import("node:sqlite")); } catch { throw bad("This server cannot build .apkg files (it needs Node 22.5 or newer). Use the text export instead.", 501); }
+  const JSZip = (await import("jszip")).default, os = await import("node:os"), fsn = await import("node:fs"), pth = await import("node:path"), crypto = await import("node:crypto");
+  const cid = String(req.query.courseId || ""), course = (await getCourses()).find((x) => x.id === cid);
+  const cards = await docs.list("cards", cid ? { courseId: cid } : {});
+  if (!cards.length) throw bad("No cards to export");
+  const f = pth.join(os.tmpdir(), "asc-" + id() + ".anki2"), db = new DatabaseSync(f), now = Math.floor(Date.now() / 1000), mid = 1700000000001, did = 1700000000002;
+  db.exec(`CREATE TABLE col (id integer primary key, crt integer not null, mod integer not null, scm integer not null, ver integer not null, dty integer not null, usn integer not null, ls integer not null, conf text not null, models text not null, decks text not null, dconf text not null, tags text not null);
+CREATE TABLE notes (id integer primary key, guid text not null, mid integer not null, mod integer not null, usn integer not null, tags text not null, flds text not null, sfld integer not null, csum integer not null, flags integer not null, data text not null);
+CREATE TABLE cards (id integer primary key, nid integer not null, did integer not null, ord integer not null, mod integer not null, usn integer not null, type integer not null, queue integer not null, due integer not null, ivl integer not null, factor integer not null, reps integer not null, lapses integer not null, left integer not null, odue integer not null, odid integer not null, flags integer not null, data text not null);
+CREATE TABLE revlog (id integer primary key, cid integer not null, usn integer not null, ease integer not null, ivl integer not null, lastIvl integer not null, factor integer not null, time integer not null, type integer not null);
+CREATE TABLE graves (usn integer not null, oid integer not null, type integer not null);
+CREATE INDEX ix_notes_usn on notes (usn); CREATE INDEX ix_cards_usn on cards (usn); CREATE INDEX ix_cards_nid on cards (nid); CREATE INDEX ix_cards_sched on cards (did, queue, due);`);
+  const fld = (n, o) => ({ name: n, ord: o, sticky: false, rtl: false, font: "Arial", size: 20, media: [] });
+  const models = { [mid]: { id: mid, name: "Asclepius Basic", type: 0, mod: now, usn: -1, sortf: 0, did, css: ".card{font-family:arial;font-size:20px;text-align:center;color:black;background:white;white-space:pre-wrap}", latexPre: "", latexPost: "", latexsvg: false, req: [[0, "any", [0]]], tags: [], vers: [], flds: [fld("Front", 0), fld("Back", 1)], tmpls: [{ name: "Card 1", ord: 0, qfmt: "{{Front}}", afmt: "{{FrontSide}}<hr id=answer>{{Back}}", bqfmt: "", bafmt: "", did: null, bfont: "", bsize: 0 }] } };
+  const deck = (i, name) => ({ id: i, name, mod: now, usn: -1, lrnToday: [0, 0], revToday: [0, 0], newToday: [0, 0], timeToday: [0, 0], collapsed: false, desc: "", dyn: 0, conf: 1, extendNew: 0, extendRev: 0 });
+  const dconf = { 1: { id: 1, mod: 0, name: "Default", usn: 0, maxTaken: 60, autoplay: true, timer: 0, replayq: true, new: { bury: true, delays: [1, 10], initialFactor: 2500, ints: [1, 4, 7], order: 1, perDay: 20 }, rev: { bury: true, ease4: 1.3, ivlFct: 1, maxIvl: 36500, perDay: 200, hard: 1.2, fuzz: 0.05 }, lapse: { delays: [10], leechAction: 1, leechFails: 8, minInt: 1, mult: 0 }, dyn: false } };
+  db.prepare("INSERT INTO col VALUES (1,?,?,?,11,0,0,0,?,?,?,?,?)").run(now, now * 1000, now * 1000, JSON.stringify({ activeDecks: [1], curDeck: 1, newSpread: 0, collapseTime: 1200, timeLim: 0, estTimes: true, dueCounts: true, curModel: String(mid), nextPos: cards.length + 1, sortType: "noteFld", sortBackwards: false, addToCur: true }), JSON.stringify(models), JSON.stringify({ 1: deck(1, "Default"), [did]: deck(did, ("Asclepius" + (course ? "::" + course.title : "")).replace(/["\\]/g, "")) }), JSON.stringify(dconf), "{}");
+  const iN = db.prepare("INSERT INTO notes VALUES (?,?,?,?,-1,?,?,?,?,0,'')"), iC = db.prepare("INSERT INTO cards VALUES (?,?,?,0,?,-1,0,0,?,0,0,0,0,0,0,0,0,'')");
+  const clean = (t) => String(t).replace(/\x1f/g, " ");
+  cards.forEach((c, i) => {
+    const nid = 1700000100000 + i, front = clean(c.front), back = clean(c.back), csum = parseInt(crypto.createHash("sha1").update(front).digest("hex").slice(0, 8), 16);
+    iN.run(nid, crypto.randomBytes(5).toString("base64url"), mid, now, "asclepius", front + "\x1f" + back, front, csum);
+    iC.run(nid + 500000, nid, did, now, i + 1);
+  });
+  db.close();
+  const zip = new JSZip(); zip.file("collection.anki2", fsn.readFileSync(f)); zip.file("media", "{}"); fsn.unlinkSync(f);
+  const buf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  res.set("Content-Disposition", 'attachment; filename="asclepius.apkg"').type("application/octet-stream").send(buf);
+}));
+app.post("/api/anki/apkg-import", audioUp.single("file"), wrap(async (req, res) => {
+  let DatabaseSync; try { ({ DatabaseSync } = await import("node:sqlite")); } catch { throw bad("This server cannot read .apkg files (it needs Node 22.5 or newer). Export from Anki as a text file instead.", 501); }
+  if (!req.file) throw bad("Choose an .apkg file");
+  if (!(await getCourses()).some((c) => c.id === req.body.courseId)) throw bad("Pick a course first");
+  const JSZip = (await import("jszip")).default, os = await import("node:os"), fsn = await import("node:fs"), pth = await import("node:path");
+  const zip = await JSZip.loadAsync(req.file.buffer).catch(() => { throw bad("That file is not a valid .apkg"); });
+  const entry = zip.file("collection.anki21") || zip.file("collection.anki2");
+  if (!entry) throw bad("This deck uses Anki's newest format. In Anki, export again and tick 'Support older Anki versions', or export as a text file.");
+  const f = pth.join(os.tmpdir(), "asc-in-" + id() + ".db"); fsn.writeFileSync(f, await entry.async("nodebuffer"));
+  let rows; try { const db = new DatabaseSync(f, { readOnly: true }); rows = db.prepare("SELECT flds FROM notes LIMIT 3000").all(); db.close(); } catch { throw bad("Could not read that deck"); } finally { fsn.unlinkSync(f); }
+  const strip = (t) => t.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(div|p)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+  const now = Date.now(), cards = [];
+  rows.forEach((r) => {
+    const p = String(r.flds).split("\x1f").map(strip); if (!p[0]) return;
+    const cl = /\{\{c\d+::(.*?)(?:::.*?)?\}\}/g;
+    if (cl.test(p[0])) cards.push({ id: id(), courseId: req.body.courseId, due: now, ease: 2.5, interval: 0, front: p[0].replace(/\{\{c\d+::.*?\}\}/g, "[…]"), back: [...p[0].matchAll(/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g)].map((m) => m[1]).join(", ") + "\n\n" + p[0].replace(/\{\{c\d+::(.*?)(?:::.*?)?\}\}/g, "$1") + (p[1] ? "\n" + p[1] : "") });
+    else if (p[1]) cards.push({ id: id(), courseId: req.body.courseId, due: now, ease: 2.5, interval: 0, front: p[0].slice(0, 600), back: p.slice(1).filter(Boolean).join("\n").slice(0, 1500) });
+  });
+  if (cards.length) await docs.putMany("cards", cards.slice(0, 3000));
+  res.json({ added: Math.min(cards.length, 3000) });
+}));
+
+// ---- label quiz boxes on atlas images ----
+app.post("/api/atlas/:id/boxes", wrap(async (req, res) => {
+  const m = await docs.get("materials", req.params.id);
+  if (!m || m.type !== "image") throw bad("No such image", 404);
+  const num = (v) => Math.max(0, Math.min(100, +v || 0));
+  m.boxes = (Array.isArray(req.body.boxes) ? req.body.boxes : []).slice(0, 40).filter((b) => +b.w > 0 && +b.h > 0).map((b) => ({ x: num(b.x), y: num(b.y), w: num(b.w), h: num(b.h), label: String(b.label || "").slice(0, 120) }));
+  await docs.put("materials", m); res.json({ saved: m.boxes.length });
 }));
 
 // ---- concept map + mnemonics ----
@@ -810,7 +1010,7 @@ app.post("/api/search", wrap(async (req, res) => {
 // =====================================================================================
 app.get("/api/settings", wrap(async (q, res) => res.json(await getSettings())));
 app.put("/api/settings", wrap(async (req, res) => {
-  const lim = { focusMin: [1, 180], shortMin: [1, 60], longMin: [1, 120], longEvery: [2, 10], dailyGoalMin: [10, 720] };
+  const lim = { focusMin: [1, 180], shortMin: [1, 60], longMin: [1, 120], longEvery: [2, 10], dailyGoalMin: [10, 720], cardLimit: [0, 500] };
   const cur = await getSettings();
   for (const k of Object.keys(lim)) {
     if (req.body[k] === undefined) continue;
