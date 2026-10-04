@@ -631,20 +631,30 @@ app.delete("/api/qbank/:id", wrap(async (req, res) => { await docs.del("qbank", 
 
 // ---- microscopy slides: Wikimedia Commons images (open licences), saved per course, AI problems per slide ----
 const COMMONS = /^https:\/\/upload\.wikimedia\.org\//;
+const SLIDE_SETS = ["micro", "macro", "ecg", "rad"]; // micro = slides under the microscope, macro = specimens and patients seen by eye
 app.get("/api/slides", wrap(async (req, res) => res.json(await docs.list("slides", req.query.courseId ? { courseId: String(req.query.courseId) } : {}))));
 app.post("/api/slides", wrap(async (req, res) => {
   const b = req.body;
   if (!COMMONS.test(String(b.thumb))) throw bad("Only Wikimedia Commons images can be saved here");
   if (!(await getCourses()).some((c) => c.id === b.courseId)) throw bad("Pick a course first");
-  const sl = { id: id(), courseId: b.courseId, title: String(b.title || "Slide").slice(0, 200), thumb: String(b.thumb).slice(0, 500), page: String(b.page || "").slice(0, 500), set: ["micro", "ecg", "rad"].includes(b.set) ? b.set : "micro", desc: String(b.desc || "").slice(0, 600), credit: String(b.credit || "").slice(0, 200), license: String(b.license || "").slice(0, 80), at: Date.now() };
+  const sl = { id: id(), courseId: b.courseId, title: String(b.title || "Slide").slice(0, 200), thumb: String(b.thumb).slice(0, 500), page: String(b.page || "").slice(0, 500), set: SLIDE_SETS.includes(b.set) ? b.set : "micro", topic: String(b.topic || "").slice(0, 120), desc: String(b.desc || "").slice(0, 600), credit: String(b.credit || "").slice(0, 200), license: String(b.license || "").slice(0, 80), at: Date.now() };
   await docs.put("slides", sl); res.json(sl);
+}));
+// move a slide between microscopy and macroscopy (older saves were all kept under microscopy)
+app.post("/api/slides/:id/move", wrap(async (req, res) => {
+  const sl = await docs.get("slides", req.params.id);
+  if (!sl) throw bad("Slide not found", 404);
+  const to = String(req.body.set);
+  if (!["micro", "macro"].includes(to) || !["micro", "macro"].includes(sl.set || "micro")) throw bad("Only microscopy and macroscopy slides can be moved");
+  sl.set = to; await docs.put("slides", sl); res.json(sl);
 }));
 app.delete("/api/slides/:id", wrap(async (req, res) => { await docs.del("slides", req.params.id); res.json({ ok: 1 }); }));
 app.post("/api/slides/:id/ask", wrap(async (req, res) => {
   const sl = await docs.get("slides", req.params.id);
   if (!sl) throw bad("Slide not found", 404);
-  const trusted = `Trusted file title: ${sl.title}\nTrusted description: ${sl.desc || "(none)"}`;
-  const FOCUS = { ecg: "You are an ECG tutor. Use a systematic approach: rate, rhythm, axis, P waves, PR interval, QRS, ST segment, T waves, QT. 'stain' should be 'ECG'.", rad: "You are a radiology tutor. Use a systematic approach (technical quality, then ABCDE or the relevant system) and describe findings before diagnosing. 'stain' should be the imaging modality.", micro: "You are a histology and pathology tutor." }[sl.set || "micro"];
+  const cr = (await getCourses()).find((c) => c.id === sl.courseId);
+  const trusted = `Trusted file title: ${sl.title}\nTrusted description: ${sl.desc || "(none)"}${cr ? `\nThe student saved it under the course "${cr.title}"${sl.topic ? `, topic "${sl.topic}"` : ""}. Use this only to pitch the level and the clinical link; the title stays the ground truth.` : ""}`;
+  const FOCUS = { ecg: "You are an ECG tutor. Use a systematic approach: rate, rhythm, axis, P waves, PR interval, QRS, ST segment, T waves, QT. 'stain' should be 'ECG'.", rad: "You are a radiology tutor. Use a systematic approach (technical quality, then ABCDE or the relevant system) and describe findings before diagnosing. 'stain' should be the imaging modality.", micro: "You are a histology, pathology, haematology and microbiology tutor. This is a slide seen under the microscope: give the stain and the magnification clues, then the cells and architecture to look for.", macro: "You are a gross pathology and anatomy tutor. This is a specimen, dissection, culture plate or patient seen with the naked eye (macroscopy), not a slide. Describe it the way a pathologist describes a gross specimen: organ, size and shape, colour, surface, consistency, cut surface and relations. 'stain' should be 'Gross specimen (no stain)' or the relevant technique, for example 'Culture on agar' or 'Clinical photograph'. Give the microscopic correlate in one of the features." }[sl.set || "micro"];
   const sys = FOCUS + ' Return ONLY JSON {"what":string (what the slide shows, using the trusted title as ground truth),"stain":string (stain, technique or modality, or "unknown"),"features":[3-6 short things to look for or look at],"questions":[4 items {"q":string,"a":string}: identify the tissue or lesion, name the stain or technique, describe key features, give the diagnosis or function and one clinical link],"sure":true or false}. Plain text. Never contradict the trusted title; if you cannot see something, say so and set sure to false.';
   let raw, seen = false;
   if (aiInfo().provider === "gemini" && COMMONS.test(sl.thumb)) {

@@ -15,6 +15,14 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 1.1:
+
+- **Microscopy and Macroscopy are now separate** (two menu items). Microscopy is what you see down the microscope: histology, cytology, smears, histopathology, stained microbes and parasites, electron micrographs. Macroscopy is what you see by eye: gross specimens and cut organs, dissections, cultures on plates, and how disease looks on the patient. The AI problems differ too (a macroscopy slide is described like a gross specimen: size, shape, colour, cut surface)
+- **Organised per course, with every topic**: Microscopy, Macroscopy, ECG trainer and Imaging trainer each open on your courses (headline = the course, grouped by year). Open a course to see every topic in its outline, each with prepared searches. Tap one, then save a picture straight to that course and topic. "My slides" and the Slide quiz are grouped and filtered by course and topic. Courses are read from your Course outline, so if you reorganise courses or add topics they appear here too (a topic with no prepared searches is searched by its own name)
+- **Anatomy 3D** has a "Browse by course" panel too (Anatomy, Neuroscience, Cardiology, Neurosurgery and others), every topic with 3D model searches
+- Slides you saved earlier under Microscopy that are really gross specimens: use "Move to Macroscopy" on the slide
+- The prepared searches live in `public/slidebank.js` (plain text, one line per topic, separated by |). Edit it to add your own. The searches were written from the course outline and have not all been tested against Wikimedia Commons, so some will return few or no pictures: try different words in the search box
+
 New in 1.0:
 
 - **Exams and auto-timetable** (Focus timer page): add exam dates; "Build my timetable" shares your daily study blocks by how close each exam is and how weak your quiz answers are, with breaks
