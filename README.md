@@ -15,6 +15,12 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 0.9:
+
+- **Alarm and timetable** (Focus timer page): pick an alarm tone (bell, chime, digital, siren), volume, and whether it keeps ringing until you press Stop. Build a daily timetable of study blocks, breaks and meals with from and to times, per weekday, or use Quick fill to generate study blocks with breaks. The alarm rings at the start of every block while the app is open, and when a focus session or break ends. "Add to phone alarms" downloads a .ics file that repeats weekly in your phone calendar, which also rings when the app is closed
+- **Question bank** (Practice): clinical case questions, lab interpretation, viva and practical questions for any course, with the answer hidden until you tap Reveal answer. Mark "I knew it" or "I missed it" to feed your weak topics. "Fill every course in Year N" generates cases and lab questions for a whole year (skips what already exists). Needs an AI key
+- **Microscopy** (new menu item): search Wikimedia Commons for histology, pathology, haematology and microbiology micrographs, save them to a course with their credit and licence, make AI problems for a slide (identify, stain, key features, diagnosis, clinical link), and take a slide quiz with the title hidden until you reveal it. With a Gemini key the AI looks at the image; otherwise it works from the title and description. Always check AI answers against your atlas
+
 New in 0.8:
 
 - **Anatomy 3D** (new menu item): searches Sketchfab's public library (no key needed) for skeleton, skull, spine, muscles, heart, brain, nerves, organs and more. In the viewer you can hide parts to peel layers, tap a part to name it and get an AI explanation (attachments, nerve and blood supply, clinical point), take a 3D location quiz, and save the model to any course as a 3D lesson. Model credit and licence are shown; keep them. Parts lists and quizzes only work on models whose parts are named. Other free sources (Z-Anatomy, BodyParts3D, NIH 3D, Smithsonian 3D) are linked there: download a .glb and add it to a course

@@ -582,6 +582,65 @@ const weakTopics = (results) => {
 };
 app.get("/api/stats", wrap(async (q, res) => res.json(weakTopics(await kv.get("results", [])))));
 
+// ---- daily timetable (alarms run in the app; this stores the plan) ----
+app.get("/api/timetable", wrap(async (q, res) => res.json(await kv.get("timetable", []))));
+app.put("/api/timetable", wrap(async (req, res) => {
+  const hm = /^([01]\d|2[0-3]):[0-5]\d$/, kinds = ["study", "break", "meal", "other"];
+  const blocks = (Array.isArray(req.body.blocks) ? req.body.blocks : []).slice(0, 80).map((b) => ({
+    id: String(b.id || id()).slice(0, 40), start: String(b.start), end: String(b.end),
+    kind: kinds.includes(b.kind) ? b.kind : "study", title: String(b.title || "").slice(0, 80), courseId: String(b.courseId || "").slice(0, 60),
+    days: (Array.isArray(b.days) && b.days.length ? b.days : [0, 1, 2, 3, 4, 5, 6]).map(Number).filter((d) => d >= 0 && d <= 6),
+  }));
+  for (const b of blocks) { if (!hm.test(b.start) || !hm.test(b.end)) throw bad("Times must look like 08:30"); if (b.end <= b.start) throw bad(`"${b.title || b.kind}" must end after it starts`); }
+  await kv.set("timetable", blocks); res.json(blocks);
+}));
+
+// ---- question bank: clinical cases, lab interpretation, viva, practical (answers hidden until revealed) ----
+const QKINDS = { case: "clinical case questions (a short vignette, then a question needing diagnosis, next step or management reasoning)", lab: "lab and investigation interpretation questions (give realistic values with units, ask what they show, the likely cause and what to do next; state the reference ranges you rely on)", viva: "oral-exam (viva) questions with a model answer a student could say in about a minute", practical: "practical-exam questions (identify, describe, explain or compare, as set in practical exams for this subject)" };
+app.get("/api/qbank", wrap(async (req, res) => res.json(await docs.list("qbank", req.query.courseId ? { courseId: String(req.query.courseId) } : {}))));
+app.post("/api/qbank/generate", wrap(async (req, res) => {
+  const { courseId, kind = "case", prompt = "" } = req.body, count = Math.min(12, Math.max(3, +req.body.count || 8));
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  if (!course) throw bad("Pick a course first");
+  if (!QKINDS[kind]) throw bad("Unknown question type");
+  const raw = await claude(`Return ONLY a JSON array of ${count} ${QKINDS[kind]} for a medical student studying "${course.title}" in a Zambian MBChB. Each item: {"topic":string (2-4 words),"q":string,"a":string (complete model answer: the key points, a short reason, and the usual next step if clinical)}. Plain text, no Markdown. Vary the topics. Do not invent facts: if a value or detail is uncertain, leave it out.`, `Focus: ${prompt || "the whole course"}\n\n${await context(courseId)}`, 7000);
+  const list = parseJSON(raw);
+  if (!Array.isArray(list)) throw new Error("The AI answer was not in the expected format. Try again.");
+  const items = list.filter((x) => x && x.q && x.a).map((x) => ({ id: id(), courseId, kind, topic: String(x.topic || "").slice(0, 60), q: String(x.q).slice(0, 1500), a: String(x.a).slice(0, 2500), at: Date.now() }));
+  if (!items.length) throw new Error("No questions came back. Try again.");
+  await docs.putMany("qbank", items); res.json({ added: items.length });
+}));
+app.delete("/api/qbank/:id", wrap(async (req, res) => { await docs.del("qbank", req.params.id); res.json({ ok: 1 }); }));
+
+// ---- microscopy slides: Wikimedia Commons images (open licences), saved per course, AI problems per slide ----
+const COMMONS = /^https:\/\/upload\.wikimedia\.org\//;
+app.get("/api/slides", wrap(async (req, res) => res.json(await docs.list("slides", req.query.courseId ? { courseId: String(req.query.courseId) } : {}))));
+app.post("/api/slides", wrap(async (req, res) => {
+  const b = req.body;
+  if (!COMMONS.test(String(b.thumb))) throw bad("Only Wikimedia Commons images can be saved here");
+  if (!(await getCourses()).some((c) => c.id === b.courseId)) throw bad("Pick a course first");
+  const sl = { id: id(), courseId: b.courseId, title: String(b.title || "Slide").slice(0, 200), thumb: String(b.thumb).slice(0, 500), page: String(b.page || "").slice(0, 500), desc: String(b.desc || "").slice(0, 600), credit: String(b.credit || "").slice(0, 200), license: String(b.license || "").slice(0, 80), at: Date.now() };
+  await docs.put("slides", sl); res.json(sl);
+}));
+app.delete("/api/slides/:id", wrap(async (req, res) => { await docs.del("slides", req.params.id); res.json({ ok: 1 }); }));
+app.post("/api/slides/:id/ask", wrap(async (req, res) => {
+  const sl = await docs.get("slides", req.params.id);
+  if (!sl) throw bad("Slide not found", 404);
+  const trusted = `Trusted file title: ${sl.title}\nTrusted description: ${sl.desc || "(none)"}`;
+  const sys = 'You are a histology and pathology tutor. Return ONLY JSON {"what":string (what the slide shows, using the trusted title as ground truth),"stain":string or "unknown","features":[3-6 short things to look for],"questions":[4 items {"q":string,"a":string}: identify the tissue or lesion, name the stain or technique, describe key features, give the diagnosis or function and one clinical link],"sure":true or false}. Plain text. Never contradict the trusted title; if you cannot see something, say so and set sure to false.';
+  let raw, seen = false;
+  if (aiInfo().provider === "gemini" && COMMONS.test(sl.thumb)) {
+    try {
+      const r = await fetch(sl.thumb, { headers: { "User-Agent": "Asclepius/0.9 (personal medical study app)" }, signal: AbortSignal.timeout(15000) });
+      const buf = Buffer.from(await r.arrayBuffer()), mime = (r.headers.get("content-type") || "").split(";")[0];
+      if (r.ok && /^image\/(jpeg|png)$/.test(mime) && buf.length < 5e6) { raw = await claude(sys, trusted, 2500, { json: true, image: { mime, data: buf.toString("base64") } }); seen = true; }
+    } catch { /* fall back to text only */ }
+  }
+  if (!raw) raw = await claude(sys + " You cannot see the image, so base everything on the trusted title and description and set sure to false.", trusted, 2500, { json: true });
+  const qa = parseJSON(raw); qa.seen = seen;
+  sl.qa = qa; await docs.put("slides", sl); res.json(sl);
+}));
+
 // ---- concept map + mnemonics ----
 app.post("/api/map", wrap(async (req, res) => {
   const { courseId, prompt = "" } = req.body;
