@@ -15,6 +15,14 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 0.6:
+
+- **Deep research for the study guide**: the guide is built in four steps. It reads many websites at once (StatPearls chapters on NCBI Bookshelf, full Wikipedia articles, MedlinePlus, Wikibooks, Wikiversity, review abstracts from Europe PMC/PubMed, and, with a Gemini key, a Google-grounded web search that reads pages such as NHS, Mayo Clinic and Merck Manual). It then plans 6-8 sections, writes each one in detail (explanation, key points, comparison table, memory aid, clinical link, source numbers), and adds a glossary, high-yield facts, pitfalls and 12-15 practice questions. The PDF has a contents box, learning objectives, numbered sources and page numbers
+- **The PowerPoint is now the short version of that guide**: one slide per guide section with 3-4 short points and a picture, an "Inside the study guide (PDF)" slide that lists what the PDF contains, and a "Full detail: study guide, section N" tag on every slide. Download everything in one zip (guide PDF + PowerPoint), or each file by itself
+- **More courses**: General & Inorganic Chemistry, Organic Chemistry, Medical Biology & Genetics, Medical Physics, Latin, Informatics & Biostatistics, History of Medicine, English, Pathological Anatomy, Pathological Physiology, Operative Surgery & Topographic Anatomy, Hygiene, Propaedeutics, Clinical Pharmacology, Nutrition, Infectious Diseases, Endocrinology, Oncology, Anaesthesiology, Phthisiology and a Year 6. They are added once, automatically, to your existing course list (nothing is renamed, changed or removed). More topics under Biochemistry. Edit or delete any of them under Course outline
+
+Notes for 0.6: a full guide takes about 1-2 minutes (several AI calls). The free Gemini limit is per minute and per day, so wait a minute if you see the limit message. Web search with Google needs a Gemini key and has its own free daily allowance; if it is used up the guide is still built from the other sites. The Websites read line under each guide shows which sites answered.
+
 New in 0.5:
 
 - **Study help is easier to read**: answers show as headings, bullets, tables and bold key terms instead of one long text. Study guides are split into collapsible sections with a high-yield box, common pitfalls and tap-to-reveal practice questions. Download a guide as a PDF, save it to your notes, copy it, or turn it into flashcards

@@ -7,11 +7,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import { kv, docs, files, backups, cloud, mode, ready, onVercel, UPLOAD_DIR } from "./lib/store.js";
-import { seedCourses, seedRefs, courseId } from "./lib/seed.js";
+import { seedCourses, seedRefs, courseId, STARTER_VERSION } from "./lib/seed.js";
 import { makeBackup, backupIfStale, listBackups, snapshot, restore } from "./lib/backup.js";
 import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
 import { research, referenceText, findPictures, fetchImage, pool } from "./lib/media.js";
-import { THEMES, tidy, normalizeDeck, chosen, buildPptx, buildSlidePdf, normalizeGuide, buildGuidePdf } from "./lib/deck.js";
+import { deepResearch, fitSources, sourceBlock } from "./lib/research.js";
+import { makeZip } from "./lib/zip.js";
+import { THEMES, tidy, normalizeDeck, chosen, buildPptx, buildSlidePdf, normalizeGuide, normalizeSection, normalizeExtras, buildGuidePdf } from "./lib/deck.js";
 
 const { PASSWORD, SECRET = "change-me", OWNER = "Student", PORT = 3000, CRON_SECRET } = process.env;
 if (!onVercel && !cloud) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -32,9 +34,20 @@ const dayOf = (v) => {
 };
 
 // ---- course list, settings, reference tables (small documents, created on first use) ----
+let starterChecked = false;
 async function getCourses() {
   let c = await kv.get("courses", null);
-  if (!c) { c = seedCourses(); await kv.set("courses", c); }
+  if (!c) { c = seedCourses(); await kv.set("courses", c); await kv.set("starterV", STARTER_VERSION); starterChecked = true; return c; }
+  if (!starterChecked) {
+    // one time per starter version: add courses that were missing (never renames, removes or changes what you already have)
+    starterChecked = true;
+    if ((await kv.get("starterV", 0)) < STARTER_VERSION) {
+      const have = new Set(c.map((x) => String(x.title).trim().toLowerCase()));
+      const add = seedCourses().filter((x) => !have.has(x.title.toLowerCase()));
+      if (add.length) { c = [...c, ...add]; await kv.set("courses", c); }
+      await kv.set("starterV", STARTER_VERSION);
+    }
+  }
   return c;
 }
 const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120, reminderTime: "" };
@@ -53,6 +66,7 @@ async function bump(day, field, n = 1) {
 }
 
 // ---- AI helpers ----
+const tidyList = (a, n, max) => (Array.isArray(a) ? a : []).map((x) => tidy(typeof x === "string" ? x : x?.text, max)).filter(Boolean).slice(0, n);
 const claude = (system, user, max = 4000, opts) => ai(system, user, max, opts);
 const translate = (t) =>
   claude("Translate the text into English. Keep structure and medical terms accurate. If it is already English, return it unchanged. Output only the text.", t.slice(0, 20000), 8000);
@@ -313,6 +327,55 @@ app.post("/api/ai", wrap(async (req, res) => {
   const sys = `${who} ${modes[m] || modes.chat} ${own}\n\nMATERIALS:\n${mats}`;
   res.json({ text: await claude(sys, prompt || "Give an overview of the whole course.") });
 }));
+// ---- deep study guide, built in steps so each step stays inside the host's time limit ----
+// 1) /api/research: read many websites   2) /api/guide/outline: plan the sections
+// 3) /api/guide/section (once per section, the browser runs several at a time)   4) /api/guide/extras: glossary, questions
+const refBudget = () => Math.min(Math.floor(ctxChars * 0.6), 48000);
+const cleanSources = (r) => (Array.isArray(r?.sources) ? r.sources : []).slice(0, 30).map((x, i) => ({
+  n: +x.n || i + 1, site: tidy(x.site, 60), title: tidy(x.title, 160), url: /^https?:\/\//.test(x.url) ? String(x.url).slice(0, 260) : "",
+  links: Array.isArray(x.links) ? x.links.slice(0, 8) : [], text: String(x.text || "").slice(0, 14000),
+})).filter((x) => x.text.length > 100);
+const studentMats = async (courseId, cap) => (await context(courseId)).slice(0, Math.min(cap, Math.floor(ctxChars * 0.2))); // small-context providers (Groq) get smaller slices
+const WRITER = "You are a senior medical educator writing a detailed study guide for a medical student. Plain text only: no markdown symbols, no asterisks, no emojis, no drug doses (say 'check your guideline'). Ground facts in the numbered SOURCES where you can, use your own knowledge to fill gaps, and add '(check textbook)' after anything you are not sure of. Where sources disagree, say so.";
+app.post("/api/research", wrap(async (req, res) => {
+  const course = (await getCourses()).find((c) => c.id === req.body.courseId);
+  const topic = tidy(req.body.topic || course?.title, 100);
+  if (!topic) throw bad("Type a topic first");
+  const r = await deepResearch(topic, { courseTitle: course?.title || "", grounded: aiInfo().provider === "gemini" });
+  if (!r.sources.length) throw new Error("Could not read any website for this topic right now. Check the topic spelling and try again.");
+  const fitted = fitSources(r.sources, refBudget());
+  res.json({ topic, report: r.report, sources: fitted });
+}));
+app.post("/api/guide/outline", wrap(async (req, res) => {
+  const course = (await getCourses()).find((c) => c.id === req.body.courseId);
+  const topic = tidy(req.body.topic || course?.title, 100), src = cleanSources(req.body.research);
+  const sys = `${WRITER} Plan the guide. Return ONLY JSON: {"title":"specific title","overview":"3-4 sentences: what this topic is, why it matters, how the guide is organised","objectives":["5-7 short statements of what the student should be able to explain or do afterwards"],"sections":[{"heading":"short heading","focus":"one sentence on exactly what this section covers"}]}
+Make 6-8 sections in a logical teaching order that fits the subject: for diseases use definition and epidemiology, aetiology and pathogenesis, clinical features, investigations, management, complications and prognosis; for chemistry use structure, nomenclature, properties, reactions and mechanisms, biological and clinical relevance; for anatomy use gross anatomy, relations, blood supply, innervation, clinical anatomy; for biochemistry use pathway or molecule, enzymes, regulation, disorders. Sections must not overlap.`;
+  const raw = await claude(sys, `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 3000)}\n\nSOURCES (titles):\n${src.map((s) => `[${s.n}] ${s.site}: ${s.title}`).join("\n")}`, 1800, { json: true });
+  const o = parseJSON(raw);
+  const sections = (Array.isArray(o.sections) ? o.sections : []).slice(0, 8).map((s) => ({ heading: tidy(s?.heading, 90), focus: tidy(s?.focus, 220) })).filter((s) => s.heading);
+  if (sections.length < 3) throw new Error("The AI did not plan the guide properly. Please try again.");
+  res.json({ title: tidy(o.title, 100) || topic, overview: tidy(o.overview, 900), objectives: tidyList(o.objectives, 8, 200), sections });
+}));
+app.post("/api/guide/section", wrap(async (req, res) => {
+  const course = (await getCourses()).find((c) => c.id === req.body.courseId);
+  const topic = tidy(req.body.topic || course?.title, 100), src = cleanSources(req.body.research), o = req.body.outline || {};
+  const i = +req.body.index, sec = Array.isArray(o.sections) ? o.sections[i] : null;
+  if (!sec) throw bad("Unknown section");
+  const sys = `${WRITER} Write ONE section of the guide. Return ONLY JSON: {"intro":"3-4 sentence paragraph that explains the idea in plain words","points":["Term: explanation in 1-2 full sentences", ...7-10 items, specific and factual],"table":null or {"title":"short","head":["col1","col2",...2-4 columns],"rows":[["..",".."],...3-8 rows]},"mnemonic":"memory aid or empty string","clinical":"1-3 sentences: a clinical or practical example that makes it stick","refs":[numbers of the sources you used]}
+Include a table only when the content really is a comparison or classification. Be detailed enough to study from. Do not repeat other sections.`;
+  const others = o.sections.map((s, k) => `${k + 1}. ${s.heading}`).join("; ");
+  const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nAll sections: ${others}\nWRITE SECTION ${i + 1}: ${sec.heading}\nFocus: ${sec.focus}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 5000)}\n\nSOURCES:\n${sourceBlock(src)}`, 2200, { json: true });
+  res.json({ section: normalizeSection(parseJSON(raw), sec.heading) });
+}));
+app.post("/api/guide/extras", wrap(async (req, res) => {
+  const course = (await getCourses()).find((c) => c.id === req.body.courseId);
+  const topic = tidy(req.body.topic || course?.title, 100), o = req.body.outline || {};
+  const sys = `${WRITER} Return ONLY JSON: {"glossary":[{"term":"..","def":"one clear sentence"}, ...10-14 key terms],"high_yield":["8-10 exam-ready facts, each one sentence"],"pitfalls":["5-7 common mistakes or confusions, each saying what is wrong and what is right"],"questions":[{"q":"..","a":"short complete answer"}, ...12-15 items mixing recall, mechanism and clinical application]}`;
+  const digest = (Array.isArray(req.body.digest) ? req.body.digest : []).map((x) => tidy(x, 700)).join("\n").slice(0, Math.min(9000, Math.floor(ctxChars * 0.3)));
+  const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nSections: ${(o.sections || []).map((s) => s.heading).join("; ")}\n\nCONTENT OF THE GUIDE (for consistency):\n${digest}\n\nSOURCES:\n${sourceBlock(fitSources(cleanSources(req.body.research), Math.min(14000, Math.floor(ctxChars * 0.3))))}`, 3200, { json: true });
+  res.json({ extras: normalizeExtras(parseJSON(raw)) });
+}));
 app.post("/api/guide/pdf", wrap(async (req, res) => {
   const g = normalizeGuide(req.body.guide, "Study guide");
   if (!g.sections.length) throw bad("There is no study guide to download yet");
@@ -322,28 +385,38 @@ app.post("/api/guide/pdf", wrap(async (req, res) => {
 }));
 
 // ---- presentations (PowerPoint + PDF) ----
-// Step 1 (/api/deck): research the topic, write the slides, find several picture choices per slide. Returns JSON for a preview.
-// Step 2 (/api/deck/export): the student's final choices come back and become a PowerPoint or PDF.
-const DECK_RULES = (n) => `You are an expert medical educator building a polished lecture deck for a medical student. Return ONLY a JSON object:
+// The deck is the SHORT version of the study guide: one slide per guide section, a few summary points each, plus pictures.
+// Step 1 (/api/deck): write the slides from the guide and find several picture choices per slide. Returns JSON for a preview.
+// Step 2 (/api/deck/export): the student's final choices come back and become a PowerPoint, slide PDF, or a zip with everything.
+const DECK_RULES = (n, guided) => `You are an expert medical educator building a polished, visual lecture deck for a medical student. Return ONLY a JSON object:
 {"title":"short specific title","subtitle":"one line","cover":{"image":"2-4 word search query for a real photo or diagram that suits the whole topic"},"slides":[...]}
-Make exactly ${n} slides in "slides", the last one being the summary (the title slide, outline and sources are added automatically). Each slide: {"layout":"bullets"|"steps"|"compare"|"facts"|"summary","kicker":"section label, 1-3 words","title":"max 8 words","notes":"2-4 sentences the presenter can say", ...fields below}
-- bullets: "bullets" (3-5 items, each under 22 words, start key ones with a short term and a colon like "Preload: ..."), "image" (2-4 word search query for a real labelled diagram, anatomy picture, histology slide, scan, ECG or clinical photo), "image2" (a different, broader query).
-- steps: "steps":[{"head":"2-4 words","text":"one sentence"}] with 3-5 items (pathways, stages, algorithms).
-- compare: "left":{"head":string,"bullets":[3-4 items]},"right":{"head":string,"bullets":[3-4 items]}.
-- facts: "facts":[{"value":"short value such as 60-100 bpm","label":"what it is"}] with 3-4 items, plus optional "bullets" (max 3).
-- summary: "title":"Key takeaways","bullets":[4-6 exam-ready points].
-Follow a teaching order: why it matters, mechanism or anatomy, clinical features, investigations, management, complications, summary. At least 70% of slides should be "bullets" with image queries; use steps, compare and facts only where they really fit, each at most twice.
-Plain, natural wording like good student slides. Text only: no markdown symbols, no emojis, no mention of AI. Use the student's materials first and the REFERENCE text to fill gaps. Never invent numbers; leave out anything you are unsure of.`;
+Make exactly ${n} slides in "slides", the last one being the summary (the title slide, outline and sources are added automatically). Each slide: {"layout":"bullets"|"steps"|"compare"|"facts"|"summary","kicker":"section label, 1-3 words","title":"max 8 words","notes":"2-4 sentences the presenter can say",${guided ? '"guideSection":number,' : ""} ...fields below}
+- bullets: "bullets" (${guided ? "3-4 SHORT summary points, each 6-14 words" : "3-5 items, each under 22 words"}, start key ones with a short term and a colon like "Preload: ..."), "image" (2-4 word search query for a real labelled diagram, anatomy picture, histology slide, scan, ECG, structure drawing or clinical photo), "image2" (a different, broader query).
+- steps: "steps":[{"head":"2-4 words","text":"one short sentence"}] with 3-5 items (pathways, stages, algorithms).
+- compare: "left":{"head":string,"bullets":[3 short items]},"right":{"head":string,"bullets":[3 short items]}.
+- facts: "facts":[{"value":"short value such as 60-100 bpm","label":"what it is"}] with 3-4 items.
+- summary: "title":"Key takeaways","bullets":[4-5 exam-ready points].
+${guided ? "The slides SUMMARISE the study guide below, which holds the full detail. Use exactly one slide per guide section, in the same order, and set \"guideSection\" to that section's number. Keep every slide short and easy to grasp: the guide PDF carries the depth, the slides give the picture. Each slide's notes should say what the guide section adds beyond the slide. Use only facts that appear in the guide." : "Follow a teaching order: why it matters, mechanism or anatomy, clinical features, investigations, management, complications, summary. Use the student's materials first and the REFERENCE text to fill gaps."}
+At least 70% of slides should be "bullets" with image queries; use steps, compare and facts only where they really fit, each at most twice. Plain, natural wording like good student slides. Text only: no markdown symbols, no emojis, no mention of AI. Never invent numbers; leave out anything you are unsure of.`;
+const guideDigest = (g) => g.sections.map((s, i) => `${i + 1}. ${s.heading}: ${s.intro.slice(0, 260)} | ${s.points.slice(0, 6).map((p) => p.slice(0, 130)).join(" | ")}${s.table ? " | (table: " + s.table.head.join("/") + ")" : ""}`).join("\n") + (g.high_yield.length ? "\nHIGH-YIELD: " + g.high_yield.slice(0, 5).join(" | ") : "");
 app.post("/api/deck", wrap(async (req, res) => {
   const { courseId } = req.body;
   const course = (await getCourses()).find((c) => c.id === courseId);
-  const topic = tidy(req.body.topic || course?.title, 100);
+  const guide = req.body.guide ? normalizeGuide(req.body.guide, req.body.topic) : null;
+  const topic = tidy(req.body.topic || guide?.title || course?.title, 100);
   if (!topic) throw bad("Type a topic first");
-  const n = Math.min(16, Math.max(6, +req.body.slides || 12));
-  const [refs, mats] = await Promise.all([research(topic, 4), context(courseId)]);
-  const raw = await claude(DECK_RULES(n),
-    `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDENT MATERIALS:\n${mats.slice(0, Math.min(ctxChars, 14000))}\n\nREFERENCE:\n${referenceText(refs)}`, 7000, { json: true });
-  const deck = normalizeDeck({ ...parseJSON(raw), course: courseLabel(course), sources: refs.map((r) => ({ title: r.title + " (Wikipedia)", url: r.url })) }, topic);
+  let raw, refs = [], guided = !!(guide && guide.sections.length >= 3);
+  if (guided) {
+    const n = Math.min(14, guide.sections.length + 1);
+    raw = await claude(DECK_RULES(n, true), `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDY GUIDE (full detail lives in the PDF):\nTitle: ${guide.title}\nOverview: ${guide.overview}\n${guideDigest(guide).slice(0, Math.min(ctxChars - 2000, 16000))}`, 5000, { json: true });
+  } else {
+    const n = Math.min(16, Math.max(6, +req.body.slides || 12));
+    const [rf, mats] = await Promise.all([research(topic, 4), context(courseId)]);
+    refs = rf;
+    raw = await claude(DECK_RULES(n, false), `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDENT MATERIALS:\n${mats.slice(0, Math.min(ctxChars, 14000))}\n\nREFERENCE:\n${referenceText(refs)}`, 7000, { json: true });
+  }
+  const web = guided ? guide.sources.filter((x) => x.url).slice(0, 6).map((x) => ({ title: `${x.site}: ${x.title}`.slice(0, 80), url: x.url })) : refs.map((r) => ({ title: r.title + " (Wikipedia)", url: r.url }));
+  const deck = normalizeDeck({ ...parseJSON(raw), course: courseLabel(course), sources: web, fromGuide: guided, guideTitle: guided ? guide.title : "", guideSections: guided ? guide.sections.map((s, i) => ({ n: i + 1, heading: s.heading })) : [] }, topic);
   if (deck.slides.length < 3) throw new Error("The AI did not return enough slides. Please try again.");
   // search the web for pictures: several candidates per slide so the student can swap them
   const jobs = [{ o: deck.cover, qs: [deck.cover.image, topic] }, ...deck.slides.filter((s) => s.layout === "bullets").map((s) => ({ o: s, qs: [s.image, s.image2, `${topic} ${s.title}`] }))];
@@ -355,19 +428,37 @@ app.post("/api/deck", wrap(async (req, res) => {
   }
   res.json({ deck, themes: Object.fromEntries(Object.entries(THEMES).map(([k, v]) => [k, v.label])) });
 }));
-app.post("/api/deck/export", wrap(async (req, res) => {
-  const deck = normalizeDeck(req.body.deck, req.body.deck?.topic);
-  const fmt = req.body.format === "pdf" ? "pdf" : "pptx", tk = THEMES[req.body.theme] ? req.body.theme : "clinical";
+async function loadPictures(deck, limit) {
   const imgs = new Map(); let total = 0;
   await pool([deck.cover, ...deck.slides].map(chosen).filter(Boolean), 6, async (c) => {
     const im = await fetchImage(c.url);
-    if (im && total + im.b.length <= 3400000) { total += im.b.length; imgs.set(c.url, im); } // keep the file under Vercel's ~4.5 MB response limit
+    if (im && total + im.b.length <= limit) { total += im.b.length; imgs.set(c.url, im); } // keep the response under Vercel's ~4.5 MB limit
   }, Date.now() + 25000);
+  return imgs;
+}
+const friendlyPdf = (e, alt) => (/ENOENT|\.afm/i.test(e.message) ? new Error("PDF export is not working on this server (font files missing)." + (alt || "")) : e);
+app.post("/api/deck/export", wrap(async (req, res) => {
+  const deck = normalizeDeck({ ...req.body.deck, fromGuide: req.body.deck?.fromGuide }, req.body.deck?.topic);
+  const fmt = req.body.format === "pdf" ? "pdf" : "pptx", tk = THEMES[req.body.theme] ? req.body.theme : "clinical";
+  const imgs = await loadPictures(deck, 3400000);
   let out;
   try { out = fmt === "pdf" ? await buildSlidePdf(deck, imgs, tk, OWNER) : await buildPptx(deck, imgs, tk, OWNER); }
-  catch (e) { throw /ENOENT|\.afm/i.test(e.message) ? new Error("PDF export is not working on this server (font files missing). Use PowerPoint instead.") : e; }
+  catch (e) { throw friendlyPdf(e, " Use PowerPoint instead."); }
   res.set("X-Pictures", String(imgs.size));
   res.type(fmt === "pdf" ? "pdf" : "application/vnd.openxmlformats-officedocument.presentationml.presentation").send(out);
+}));
+// everything in one download: the detailed guide PDF + the short PowerPoint
+app.post("/api/pack/export", wrap(async (req, res) => {
+  const deck = normalizeDeck(req.body.deck, req.body.deck?.topic), guide = normalizeGuide(req.body.guide, deck.title);
+  const tk = THEMES[req.body.theme] ? req.body.theme : "clinical";
+  const course = (await getCourses()).find((c) => c.id === req.body.courseId);
+  const imgs = await loadPictures(deck, 2800000);
+  const base = (deck.title || "study").replace(/[^\w\- ]+/g, "").trim().slice(0, 50) || "study";
+  const out = [];
+  if (guide.sections.length) { try { out.push({ name: `${base} - study guide.pdf`, data: await buildGuidePdf(guide, { owner: OWNER, course: courseLabel(course) }, tk) }); } catch (e) { throw friendlyPdf(e); } }
+  out.push({ name: `${base} - presentation.pptx`, data: await buildPptx(deck, imgs, tk, OWNER) });
+  res.set("X-Pictures", String(imgs.size));
+  res.type("zip").send(makeZip(out));
 }));
 
 // ---- flashcards (spaced repetition) ----
