@@ -33,7 +33,7 @@ textarea{width:100%;min-height:90px}input[type=text],input[type=url],input[type=
 button.p{background:var(--acc);color:var(--accfg);border-color:var(--acc);cursor:pointer;font-weight:600}button.d{color:var(--bad);cursor:pointer}
 button{cursor:pointer}button:disabled{opacity:.55;cursor:default}
 .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
-.tabs button{cursor:pointer}.tabs button.on{background:var(--tabon);color:var(--tabonfg)}
+.chip{padding:4px 10px;border:1px solid var(--line);border-radius:14px;background:transparent;color:inherit;cursor:pointer;margin:2px}.tabs button{cursor:pointer}.tabs button.on{background:var(--tabon);color:var(--tabonfg)}
 pre{white-space:pre-wrap;font:inherit}iframe,model-viewer{width:100%;height:340px;border:1px solid var(--line);border-radius:6px;background:var(--viewer)}
 .err{color:var(--bad)}.muted{color:var(--muted)}.sm{font-size:13px}
 a{color:var(--acc)}
@@ -248,8 +248,8 @@ function icsFile(time){const[h,m]=time.split(":"),d=new Date(),p=n=>String(n).pa
 
 /* ---------- navigation ---------- */
 const yrs=()=>Array.from({length:Math.max(5,...courses.map(c=>+c.year||1))},(_,i)=>i+1);
-const VIEWS={practice:()=>viewPractice(),outline:()=>viewOutline(),today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
-const TITLES={today:"Today",practice:"Practice",outline:"Course outline",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
+const VIEWS={practice:()=>viewPractice(),anatomy:()=>viewAnatomy(),atlas:()=>viewAtlas(),outline:()=>viewOutline(),today:()=>viewToday(),progress:()=>viewProgress(),focus:()=>viewFocus(),ref:()=>viewRef(),search:()=>viewSearch(),backup:()=>viewBackup()};
+const TITLES={today:"Today",practice:"Practice",anatomy:"Anatomy 3D",atlas:"Image atlas",outline:"Course outline",progress:"Progress",focus:"Focus timer",ref:"Drug & lab reference",search:"Search",backup:"Backup & sync"};
 function go(v){view=v;cur=null;drawNav();$("#crumb").textContent=TITLES[v];VIEWS[v]().catch(e=>{if(e.message!=="login")showErr(e,()=>go(v))})}
 async function init(){
  try{courses=await api("/api/courses")}catch(e){if(e.message!=="login"){$("#login").hidden=true;$("#app").hidden=false;$("#nav").innerHTML="";
@@ -362,13 +362,14 @@ async function buildGuide(id,topic,say){
  return g}
 let guideCur=null;
 function showGuide(id,g,topic,compact){const o=$("#out");guideCur={id,g,topic};const text=guideTxt(g);
- const bar=`<div class="row acts"><button class="p" id="gp">Download guide PDF</button>${compact?"":`<button id="gm">Make presentation from this guide</button>`}<button id="gs">Save to my notes</button><button id="gf">Make flashcards</button><button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
+ const bar=`<div class="row acts"><button class="p" id="gp">Download guide PDF</button>${compact?"":`<button id="gm">Make presentation from this guide</button>`}<button id="gs">Save to my notes</button><button id="gf">Make flashcards</button><button id="gl">Listen</button><button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
  o.innerHTML=compact?`<div class="card"><h3>Study guide ready: ${esc(g.title)}</h3><p class="sm muted">${g.sections.length} sections, ${g.glossary.length} glossary terms, ${g.questions.length} practice questions, ${g.sources.length} sources.</p>${bar}<details><summary>Read the guide here</summary>${guideHTML(g)}</details></div>`:guideHTML(g)+bar;
  const say=t=>{const e=$("#am");if(e)e.textContent=t};
  $("#gp").onclick=async()=>{say("Building PDF…");try{saveBlob(await jpost("/api/guide/pdf",{guide:g,courseId:id}),fname(g.title)+" - study guide.pdf");say("")}catch(e){say(e.message)}};
  if($("#gm"))$("#gm").onclick=()=>{$("#pr").value=topic;makeDeck(id,topic)};
  $("#gs").onclick=async()=>{try{await post("/api/materials",{courseId:id,type:"note",title:g.title.slice(0,100),body:text,translate:"0"});say("Saved. It shows in the materials list when you reopen this course.")}catch(e){say(e.message)}};
  $("#gf").onclick=async()=>{say("Making flashcards…");try{say(`Added ${(await post("/api/cards/generate",{courseId:id,prompt:g.title})).added} cards. Review them under Today.`)}catch(e){say(e.message)}};
+ $("#gl").onclick=()=>listen(text,$("#gl"));
  $("#gc").onclick=async()=>{try{await navigator.clipboard.writeText(text);say("Copied")}catch{say("Could not copy. Select the text and copy it by hand.")}}}
 function showAnswer(id,r,pr){const o=$("#out"),text=r.text||"";
  o.innerHTML=`<div class="md">${md(text)}</div><div class="row acts"><button id="gs">Save to my notes</button><button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
@@ -452,6 +453,7 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this material?")){await api("/api/materials/"+b.dataset.del,{method:"DELETE"});open(id)}})}
 function card(m){let v="";const u=safeUrl(m.url);
  if(m.type==="3d"){v=/\.(glb|gltf)$/i.test(m.file)?`<model-viewer src="/files/${m.file}" camera-controls auto-rotate></model-viewer>`:u?`<iframe src="${esc(u)}" allowfullscreen></iframe>`:""}
+ else if(m.type==="image"&&m.file)v=`<img src="/files/${m.file}" alt="" style="max-width:100%">`;
  else if(m.file)v=`<a href="/files/${m.file}" target="_blank">Open file</a>`;
  else if(u)v=`<a href="${esc(u)}" target="_blank" rel="noopener">Source</a>`;
  return `<div class="card"><div class="row" style="justify-content:space-between"><h3>${esc(m.title)}</h3><button class="d" data-del="${m.id}">Delete</button></div>${v}${m.body?`<details><summary>Read</summary><pre>${esc(m.body)}</pre></details>`:""}</div>`}
@@ -488,9 +490,9 @@ async function viewSearch(){
 let pTab="mock",pm=null,sim=null;
 const courseOpts=()=>yrs().map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}">${esc(c.title)}</option>`).join("")}</optgroup>`).join("");
 async function viewPractice(){courses=await api("/api/courses");
- $("#main").innerHTML=`<h2>Practice</h2><div class="tabs">${[["mock","Mock exam"],["osce","OSCE station"],["sim","Patient simulator"],["calc","Calculators"]].map(([k,t])=>`<button data-t="${k}" class="${pTab===k?"on":""}">${t}</button>`).join("")}</div><div id="pbody"></div>`;
+ $("#main").innerHTML=`<h2>Practice</h2><div class="tabs">${[["mock","Mock exam"],["osce","OSCE station"],["sim","Patient simulator"],["map","Concept map"],["cards","Cloze cards"],["calc","Calculators"]].map(([k,t])=>`<button data-t="${k}" class="${pTab===k?"on":""}">${t}</button>`).join("")}</div><div id="pbody"></div>`;
  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{pTab=b.dataset.t;viewPractice()});
- ({mock:pMock,osce:pOsce,sim:pSim,calc:pCalc})[pTab]()}
+ ({mock:pMock,osce:pOsce,sim:pSim,map:pMap,cards:pCards,calc:pCalc})[pTab]()}
 function pickRow(extra){return `<div class="row"><select id="pc">${courseOpts()}</select><input id="pp" placeholder="Topic (optional)">${extra||""}</div>`}
 function pMock(){$("#pbody").innerHTML=`<div class="card"><p class="muted sm">10 clinical-vignette questions, 90 seconds each. Wrong topics feed your weak-topic list.</p>${pickRow('<button class="p" id="pgo">Start</button>')}<div id="pq"></div></div>`;
  $("#pgo").onclick=async()=>{const o=$("#pq");o.innerHTML="<p class='muted'>Writing questions…</p>";
@@ -535,6 +537,110 @@ function pCalc(){$("#pbody").innerHTML=CALCS.map((c,i)=>`<details class="card"><
   else if(c.c){const b=[...d.querySelectorAll("[data-c]")];v=b.reduce((n,x,j)=>n+(x.checked?(c.w?c.w[j]:1):0),0)}
   else{v=[...d.querySelectorAll("[data-n]")].map(x=>parseFloat(x.value));if(v.some(isNaN)){o.textContent="";return}}
   o.textContent=c.r(v,!!d.querySelector("[data-sex]:checked"))};d.addEventListener("input",run);d.addEventListener("change",run);run()})}
+/* ---- Anatomy 3D (Sketchfab public search + Viewer API), Image atlas, Concept map, Cards ---- */
+const SYSTEMS=["Full skeleton","Skull","Spine","Hand bones","Foot bones","Muscles","Heart","Brain","Nervous system","Digestive system","Respiratory system","Urinary system","Blood vessels","Joints","Eye","Ear"];
+let sfLoad=null,anat={q:"Full skeleton",res:null,sel:null,api:null,nodes:{},mode:"explore",quiz:null};
+const loadSf=()=>sfLoad||(sfLoad=new Promise((ok,no)=>{const s=document.createElement("script");s.src="https://static.sketchfab.com/api/sketchfab-viewer-1.12.1.js";s.onload=ok;s.onerror=()=>{sfLoad=null;no(new Error("Could not load the 3D viewer. You need to be online."))};document.head.appendChild(s)}));
+async function viewAnatomy(){courses=await api("/api/courses");
+ $("#main").innerHTML=`<h2>Anatomy 3D</h2><p class="muted sm">Search open 3D anatomy models (skeleton, muscles, organs, nerves). Hide parts to peel layers, tap a part to name it, or take a 3D location quiz.</p>
+ <div class="row" style="flex-wrap:wrap">${SYSTEMS.map(t=>`<button class="chip" data-q="${t}">${t}</button>`).join("")}</div>
+ <div class="row"><input id="aq" value="${esc(anat.q)}" style="flex:1"><button class="p" id="ag">Search</button></div>
+ <div id="av"></div><div id="ar"></div>
+ <details class="card"><summary><b>More free 3D sources</b></summary><p class="sm">Check each licence and give credit. Download a .glb and add it as a 3D lesson in any course.</p><ul class="sm"><li><a href="https://www.z-anatomy.com" target="_blank" rel="noopener">Z-Anatomy</a> (open atlas of the whole body)</li><li><a href="https://lifesciencedb.jp/bp3d/" target="_blank" rel="noopener">BodyParts3D</a> (open anatomical parts)</li><li><a href="https://3d.nih.gov" target="_blank" rel="noopener">NIH 3D</a></li><li><a href="https://3d.si.edu" target="_blank" rel="noopener">Smithsonian 3D</a></li><li><a href="https://sketchfab.com/tags/anatomy" target="_blank" rel="noopener">Sketchfab anatomy</a></li></ul></details>`;
+ const go2=q=>{anat.q=q;$("#aq").value=q;anatSearch()};
+ document.querySelectorAll(".chip[data-q]").forEach(b=>b.onclick=()=>go2(b.dataset.q));
+ $("#ag").onclick=()=>go2($("#aq").value.trim()||"human skeleton");$("#aq").onkeydown=e=>{if(e.key==="Enter")$("#ag").click()};
+ if(anat.sel)anatOpen(anat.sel);anatSearch()}
+async function anatSearch(){const o=$("#ar");o.innerHTML="<p class='muted'>Searching…</p>";
+ try{anat.res=await api("/api/anatomy/search?q="+encodeURIComponent(anat.q));
+  o.innerHTML=anat.res.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">${anat.res.map((m,i)=>`<button class="card" data-i="${i}" style="text-align:left;padding:6px">${m.thumb?`<img src="${esc(m.thumb)}" alt="" style="width:100%;border-radius:4px">`:""}<div class="sm"><b>${esc(m.name)}</b></div><div class="sm muted">${esc(m.by)}${m.license?" · "+esc(m.license):""}</div></button>`).join("")}</div>`:"<p class='muted'>No models found. Try another search.</p>";
+  o.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{anat.sel=anat.res[+b.dataset.i];anat.mode="explore";anatOpen(anat.sel);scrollTo({top:0,behavior:"smooth"})})}
+ catch(e){o.innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+async function anatOpen(m){const v=$("#av");
+ v.innerHTML=`<div class="card"><h3>${esc(m.name)}</h3><iframe id="skf" allow="autoplay; fullscreen; xr-spatial-tracking" allowfullscreen style="height:55vh;min-height:300px"></iframe>
+ <p class="sm muted">By ${esc(m.by)}${m.license?" · "+esc(m.license):""} · <a href="https://sketchfab.com/3d-models/${m.uid}" target="_blank" rel="noopener">on Sketchfab</a></p>
+ <div class="row tabs"><button data-am="explore" class="on">Explore</button><button data-am="quiz">3D quiz</button></div>
+ <div id="ap" class="sm"><p class="muted">Loading the model…</p></div>
+ <div class="row"><select id="asc">${yrs().map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}">${esc(c.title)}</option>`).join("")}</optgroup>`).join("")}</select><button id="asv">Save as 3D lesson</button></div><p id="asm" class="sm"></p></div>`;
+ $("#asv").onclick=async()=>{try{await post("/api/materials",{courseId:$("#asc").value,type:"3d",title:m.name+" (by "+m.by+")",url:"https://sketchfab.com/models/"+m.uid+"/embed",body:"Credit: "+m.by+(m.license?", "+m.license:"")+", via Sketchfab.",translate:"0"});$("#asm").textContent="Saved to the course materials."}catch(e){$("#asm").textContent=e.message}};
+ document.querySelectorAll("[data-am]").forEach(b=>b.onclick=()=>{anat.mode=b.dataset.am;document.querySelectorAll("[data-am]").forEach(x=>x.classList.toggle("on",x===b));anatPanel()});
+ try{await loadSf();const client=new Sketchfab($("#skf"));
+  client.init(m.uid,{ui_infos:0,ui_watermark:0,success:a=>{anat.api=a;a.start();a.addEventListener("viewerready",()=>{
+    a.getNodeMap((err,nodes)=>{anat.nodes=err?{}:nodes;anatPanel()});
+    a.addEventListener("click",info=>{if(!info||!info.instanceID)return;anatPick(info.instanceID)},{pick:"fast"})})},
+   error:()=>{$("#ap").innerHTML="<p class='err'>This model could not be loaded. Pick another.</p>"}})}
+ catch(e){$("#ap").innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+const nodeName=id=>{let n=anat.nodes[id],k=0;while(n&&k++<6){if(n.name&&!/^(root|scene|object|mesh|node)\b/i.test(n.name))return n.name.replace(/[_\.]+/g," ").trim();n=anat.nodes[n.parentInstanceID]}return""};
+function anatParts(){const seen=new Set(),out=[];for(const [id,n] of Object.entries(anat.nodes)){if(!n||!n.name||!["MatrixTransform","Geometry","Group"].includes(n.type))continue;const nm=nodeName(id);if(!nm||seen.has(nm.toLowerCase()))continue;seen.add(nm.toLowerCase());out.push({id,name:nm})}return out.slice(0,400)}
+function anatPanel(){const p=$("#ap");if(!p)return;const parts=anatParts();
+ if(anat.mode==="quiz"){if(!parts.length){p.innerHTML="<p class='muted'>This model has no named parts, so a quiz is not possible. Pick a model with labelled structures.</p>";return}
+  anat.quiz={target:null,ok:0,n:0};anatQuizNext();return}
+ anat.quiz=null;
+ p.innerHTML=parts.length?`<p class="muted">Tap a part on the model to name it, or use the list to hide parts and peel back layers.</p><p id="pk"></p><div class="row"><input id="pf" placeholder="Filter parts" style="flex:1"><button id="pha">Hide all</button><button id="psa">Show all</button></div><div id="pl" style="max-height:200px;overflow:auto"></div>`:"<p class='muted'>This model has no separate named parts. You can still rotate and zoom it. Pick a model with labelled structures to hide parts and take a quiz.</p>";
+ if(!parts.length)return;
+ const draw=()=>{const f=$("#pf").value.toLowerCase();$("#pl").innerHTML=parts.filter(x=>!f||x.name.toLowerCase().includes(f)).map(x=>`<label style="display:block"><input type="checkbox" data-id="${x.id}" ${anat.hid&&anat.hid.has(x.id)?"":"checked"}> ${esc(x.name)}</label>`).join("");
+  $("#pl").querySelectorAll("[data-id]").forEach(c=>c.onchange=()=>{(anat.hid||(anat.hid=new Set()));if(c.checked){anat.api.show(+c.dataset.id);anat.hid.delete(c.dataset.id)}else{anat.api.hide(+c.dataset.id);anat.hid.add(c.dataset.id)}})};
+ anat.hid=new Set();$("#pf").oninput=draw;draw();
+ $("#pha").onclick=()=>{parts.forEach(x=>{anat.api.hide(+x.id);anat.hid.add(x.id)});draw()};$("#psa").onclick=()=>{parts.forEach(x=>anat.api.show(+x.id));anat.hid.clear();draw()}}
+function anatPick(id){const nm=nodeName(id);
+ if(anat.mode==="quiz"&&anat.quiz&&anat.quiz.target){const ok=nm&&nm.toLowerCase()===anat.quiz.target.name.toLowerCase();anat.quiz.n++;if(ok)anat.quiz.ok++;post("/api/results",{courseId:"-",topic:"3D anatomy",correct:!!ok,day:localDay()}).catch(()=>{});
+  const f=$("#qf");if(f)f.textContent=ok?"Correct.":"That was "+(nm||"an unnamed part")+".";setTimeout(()=>{if(anat.mode==="quiz")anatQuizNext()},900);return}
+ const pk=$("#pk");if(!pk)return;pk.innerHTML=nm?`<b>${esc(nm)}</b> <button id="pex">Explain</button><div id="pxo"></div>`:"<span class='muted'>No name for that part.</span>";
+ if(nm)$("#pex").onclick=async()=>{$("#pxo").textContent="Thinking…";try{const r=await post("/api/anatomy/explain",{part:nm});$("#pxo").innerHTML=md?md(r.text):"<pre>"+esc(r.text)+"</pre>"}catch(e){$("#pxo").textContent=e.message}}}
+function anatQuizNext(){const q=anat.quiz;if(!q)return;const parts=anatParts(),t=parts[Math.floor(Math.random()*parts.length)];q.target=t;const p=$("#ap");if(p)p.innerHTML=`<p><b>Tap the ${esc(t.name)}</b> on the model.</p><p class="muted">Score ${q.ok} / ${q.n} <button id="qs">Skip</button></p><p id="qf"></p>`;const sk=$("#qs");if(sk)sk.onclick=()=>{q.n++;anatQuizNext()}}
+
+/* Image atlas */
+let atl=null;
+async function viewAtlas(){courses=await api("/api/courses");atl=await api("/api/atlas");
+ $("#main").innerHTML=`<h2>Image atlas</h2><p class="muted sm">Keep your own histology slides, ECGs, X-rays and diagrams by topic. Add labels, then turn any image into image-occlusion flashcards.</p>
+ <div class="card"><h3>Add an image</h3><div class="row"><select id="ac">${yrs().map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}">${esc(c.title)}</option>`).join("")}</optgroup>`).join("")}</select><input id="at" placeholder="Title, e.g. Normal ECG"></div><textarea id="ab" placeholder="Labels or notes (optional)"></textarea><div class="row"><input type="file" id="af" accept="image/*"><button class="p" id="as">Save</button></div><p class="err" id="ae"></p></div>
+ <input id="aqf" placeholder="Search the atlas" style="width:100%;margin:8px 0"><div id="agrid"></div><div id="aocc"></div>`;
+ $("#as").onclick=async()=>{const e=$("#ae"),f=$("#af").files[0];if(!f){e.textContent="Choose an image first";return}e.textContent="Saving…";
+  try{const img=await shrink(f),base={courseId:$("#ac").value,type:"image",title:$("#at").value||"Untitled image",body:$("#ab").value,translate:"0"};
+   const up=await uploadFile(new File([img],"atlas.jpg",{type:"image/jpeg"}),p=>e.textContent=`Uploading ${p}%`);
+   if(up)await post("/api/materials",{...base,...up});else{const fd=new FormData();Object.entries(base).forEach(([k,v])=>fd.append(k,v));fd.append("file",img,"atlas.jpg");await api("/api/materials",{method:"POST",body:fd})}
+   viewAtlas()}catch(x){e.textContent=x.message}};
+ const draw=()=>{const q=$("#aqf").value.toLowerCase(),cn=id=>(courses.find(c=>c.id===id)||{}).title||"";
+  const l=atl.filter(m=>!q||(m.title+" "+m.body+" "+cn(m.courseId)).toLowerCase().includes(q));
+  $("#agrid").innerHTML=l.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">${l.map(m=>`<div class="card" style="padding:6px"><a href="/files/${m.file}" target="_blank"><img src="/files/${m.file}" alt="" loading="lazy" style="width:100%;border-radius:4px"></a><div class="sm"><b>${esc(m.title)}</b></div><div class="sm muted">${esc(cn(m.courseId))}</div><div class="row"><button data-o="${m.id}">Occlusion cards</button><button class="d" data-d="${m.id}">Delete</button></div></div>`).join("")}</div>`:'<p class="muted">No images yet.</p>';
+  document.querySelectorAll("[data-d]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this image?")){await api("/api/materials/"+b.dataset.d,{method:"DELETE"});viewAtlas()}});
+  document.querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>occEdit(atl.find(m=>m.id===b.dataset.o)))};
+ $("#aqf").oninput=draw;draw()}
+function occEdit(m){const o=$("#aocc");let boxes=[];
+ o.innerHTML=`<div class="card"><h3>Hide the labels: ${esc(m.title)}</h3><p class="sm muted">Drag on the image to cover each structure, then type its name below.</p><div id="obox" style="position:relative;display:inline-block;max-width:100%;touch-action:none;user-select:none"><img src="/files/${m.file}" style="display:block;max-width:100%"><div id="olay"></div></div><div id="olist"></div><div class="row"><button class="p" id="omk">Make cards</button><button id="ocl">Clear boxes</button></div><p id="om" class="sm"></p></div>`;
+ o.scrollIntoView({behavior:"smooth"});
+ const box=$("#obox"),ov=$("#olay"),paint=()=>{ov.innerHTML=boxes.map((b,i)=>`<i style="position:absolute;left:${b.x}%;top:${b.y}%;width:${b.w}%;height:${b.h}%;background:#444;border:1px solid #fff;opacity:.85"></i>`).join("");
+  $("#olist").innerHTML=boxes.map((b,i)=>`<div class="row"><span class="muted sm">${i+1}</span><input data-l="${i}" value="${esc(b.label)}" placeholder="Name of box ${i+1}" style="flex:1"></div>`).join("");
+  document.querySelectorAll("[data-l]").forEach(x=>x.oninput=()=>boxes[+x.dataset.l].label=x.value)};
+ let st=null;const pt=e=>{const r=box.getBoundingClientRect();return{x:Math.max(0,Math.min(100,(e.clientX-r.left)/r.width*100)),y:Math.max(0,Math.min(100,(e.clientY-r.top)/r.height*100))}};
+ box.onpointerdown=e=>{st=pt(e);box.setPointerCapture(e.pointerId);boxes.push({x:st.x,y:st.y,w:0,h:0,label:""})};
+ box.onpointermove=e=>{if(!st)return;const p=pt(e),b=boxes[boxes.length-1];b.x=Math.min(st.x,p.x);b.y=Math.min(st.y,p.y);b.w=Math.abs(p.x-st.x);b.h=Math.abs(p.y-st.y);paintBoxes()};
+ const paintBoxes=()=>{ov.innerHTML=boxes.map(b=>`<i style="position:absolute;left:${b.x}%;top:${b.y}%;width:${b.w}%;height:${b.h}%;background:#444;border:1px solid #fff;opacity:.85"></i>`).join("")};
+ box.onpointerup=()=>{if(!st)return;st=null;const b=boxes[boxes.length-1];if(b.w<1.5||b.h<1.5)boxes.pop();paint()};
+ $("#ocl").onclick=()=>{boxes=[];paint()};
+ $("#omk").onclick=async()=>{try{const r=await post("/api/cards/occlude",{courseId:m.courseId,file:m.file,title:m.title,boxes});$("#om").textContent=`Made ${r.added} cards. Review them under Today.`;dueN+=r.added;paintDue&&paintDue()}catch(e){$("#om").textContent=e.message}}}
+
+/* Concept map + cards (tabs inside Practice) */
+function pMap(){$("#pbody").innerHTML=`<div class="card"><p class="muted sm">A concept map of a topic with memory aids, built from your materials.</p>${pickRow('<button class="p" id="pgo">Make map</button>')}<div id="pmo"></div></div>`;
+ $("#pgo").onclick=async()=>{const o=$("#pmo");o.innerHTML="<p class='muted'>Building the map…</p>";
+  try{const g=await post("/api/map",{courseId:$("#pc").value,prompt:$("#pp").value});const br=(g.branches||[]).slice(0,8),W=900,C=W/2,n=br.length||1;let svg="";
+   const T=(x,y,t,a,b)=>`<text x="${x}" y="${y}" text-anchor="${a||"middle"}" ${b?'font-weight="700"':""} font-size="${b?15:13}" fill="currentColor">${esc(t)}</text>`;
+   br.forEach((b,i)=>{const th=-Math.PI/2+i*2*Math.PI/n,bx=C+190*Math.cos(th),by=C+190*Math.sin(th),side=Math.cos(th)>=0?1:-1,items=(b.items||[]).slice(0,5);
+    svg+=`<line x1="${C}" y1="${C}" x2="${bx}" y2="${by}" stroke="var(--line)" stroke-width="2"/>`;
+    items.forEach((t,k)=>{const ty=by+(k-(items.length-1)/2)*34,tx=C+(Math.abs(Math.cos(th))>.3?370*side:bx+(Math.cos(th)>=0?60:-60));svg+=`<line x1="${bx}" y1="${by}" x2="${tx}" y2="${ty}" stroke="var(--line)"/>${T(tx+(side*6),ty+4,t,side>0?"start":"end")}`});
+    svg+=`<rect x="${bx-70}" y="${by-18}" width="140" height="36" rx="10" fill="var(--viewer)" stroke="currentColor"/>`+T(bx,by+5,String(b.label).slice(0,22),"middle",1)});
+   svg+=`<ellipse cx="${C}" cy="${C}" rx="85" ry="34" fill="var(--viewer)" stroke="currentColor" stroke-width="2"/>`+T(C,C+5,String(g.center||"").slice(0,24),"middle",1);
+   const mn=br.filter(b=>b.mnemonic);
+   o.innerHTML=`<div style="overflow:auto;border:1px solid var(--line);border-radius:6px"><svg width="${W}" height="${W}" viewBox="0 0 ${W} ${W}" style="min-width:${W}px;color:inherit;max-width:none">${svg}</svg></div>${mn.length?`<h4>Memory aids</h4>${mn.map(b=>`<p class="mn"><b>${esc(b.label)}:</b> ${esc(b.mnemonic)}</p>`).join("")}`:""}<div class="row"><button id="pmn">Save to my notes</button><span id="pmm" class="sm muted"></span></div>`;
+   $("#pmn").onclick=async()=>{try{await post("/api/materials",{courseId:$("#pc").value,type:"note",title:"Concept map: "+(g.center||"").slice(0,80),body:br.map(b=>b.label+"\n- "+(b.items||[]).join("\n- ")+(b.mnemonic?"\nMemory aid: "+b.mnemonic:"")).join("\n\n"),translate:"0"});$("#pmm").textContent="Saved."}catch(e){$("#pmm").textContent=e.message}}}
+  catch(e){o.innerHTML=`<p class="err">${esc(e.message)}</p>`}}}
+function pCards(){$("#pbody").innerHTML=`<div class="card"><h3>Cloze cards</h3><p class="muted sm">Hide key words with {{c1::double braces}}. Each hidden word becomes its own card. Spaced repetition now uses FSRS.</p>${pickRow()}<textarea id="pz" placeholder="The {{c1::femoral nerve}} supplies the {{c2::quadriceps}}."></textarea><div class="row"><button class="p" id="pza">Add cloze cards</button><button id="pzg">Let AI write cloze cards</button></div><p id="pzm" class="sm"></p></div><p class="muted sm">Image-occlusion cards: open the Image atlas, add an image and press Occlusion cards.</p>`;
+ const say=t=>$("#pzm").textContent=t,after=r=>{say(`Added ${r.added} cards. Review them under Today.`);dueN+=r.added;paintDue&&paintDue()};
+ $("#pza").onclick=async()=>{try{after(await post("/api/cards/cloze",{courseId:$("#pc").value,text:$("#pz").value}))}catch(e){say(e.message)}};
+ $("#pzg").onclick=async()=>{say("Writing cards…");try{after(await post("/api/cards/cloze-ai",{courseId:$("#pc").value,prompt:$("#pp").value}))}catch(e){say(e.message)}}}
+const cardImg=(c,rev)=>c.img?`<div style="position:relative;display:inline-block;max-width:100%"><img src="/files/${c.img}" style="display:block;max-width:100%"><i style="position:absolute;left:${c.box.x}%;top:${c.box.y}%;width:${c.box.w}%;height:${c.box.h}%;${rev?"outline:3px solid #2a9d8f":"background:#444;border:1px solid #fff"}"></i></div>`:"";
+const listen=(text,btn)=>{if(!("speechSynthesis"in window)){btn.textContent="Audio not supported";return}const S=speechSynthesis;if(S.speaking){S.cancel();btn.textContent="Listen";return}
+ const parts=String(text).replace(/\s+/g," ").match(/.{1,220}(\s|$)/g)||[];btn.textContent="Stop";parts.forEach((p,i)=>{const u=new SpeechSynthesisUtterance(p);u.lang="en-GB";if(i===parts.length-1)u.onend=()=>btn.textContent="Listen";S.speak(u)})};
 async function viewToday(){
  const [due,plan,stats,sum]=await Promise.all([api("/api/cards/due"),api("/api/plan"),api("/api/stats"),api("/api/summary?day="+localDay())]);
  const mins=Math.round((sum.today.focusSec||0)/60),st=sum.streak;
@@ -553,8 +659,8 @@ async function viewToday(){
    if(t&&"Notification"in window&&Notification.permission==="default")Notification.requestPermission();checkReminder()}catch(e){$("#rtm").textContent=e.message}};
  $("#rts").onclick=()=>saveRem($("#rt").value);$("#rto").onclick=()=>saveRem("");$("#rti").onclick=()=>icsFile($("#rt").value||"19:00");
  let k=0;const rv=()=>{const c=due[k];if(!c){$("#cd").innerHTML='<p class="muted">All caught up.</p>';return}
-  $("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p><button id="sa">Show answer</button>`;
-  $("#sa").onclick=()=>{$("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p><p>${esc(c.back)}</p><div class="row">${["Again","Hard","Good","Easy"].map((n,g)=>`<button data-g="${g}">${n}</button>`).join("")}</div>`;
+  $("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p>${cardImg(c,false)}<button id="sa">Show answer</button>`;
+  $("#sa").onclick=()=>{$("#cd").innerHTML=`<p><b>${esc(c.front)}</b></p>${cardImg(c,true)}<p style="white-space:pre-wrap">${esc(c.back)}</p><div class="row">${["Again","Hard","Good","Easy"].map((n,g)=>`<button data-g="${g}">${n}</button>`).join("")}</div>`;
    document.querySelectorAll("[data-g]").forEach(b=>b.onclick=async()=>{document.querySelectorAll("[data-g]").forEach(x=>x.disabled=true);
     const body={id:c.id,grade:+b.dataset.g,day:localDay(),rid:"r"+Date.now()+Math.random().toString(36).slice(2,6)};
     try{await post(`/api/cards/${c.id}/review`,body)}catch(e){if(e.net){rqSet([...rqGet(),body]);toast("Offline. Saved, it will sync when you are back online.")}else{$("#cd").innerHTML=`<p class="err">${esc(e.message)}</p>`;return}}k++;dueN=Math.max(0,dueN-1);paintDue();rv()})}};rv();
