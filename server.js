@@ -42,6 +42,10 @@ async function getCourses() {
     // one time per starter version: add courses that were missing (never renames, removes or changes what you already have)
     starterChecked = true;
     if ((await kv.get("starterV", 0)) < STARTER_VERSION) {
+      // MBChB here is 5 years: move any old Year 6 courses into Year 5 (same ids, so materials, cards and progress stay attached)
+      let moved = false;
+      c = c.map((x) => (+x.year > 5 ? (moved = true, { ...x, year: 5 }) : x));
+      if (moved) await kv.set("courses", c);
       const have = new Set(c.map((x) => String(x.title).trim().toLowerCase()));
       const add = seedCourses().filter((x) => !have.has(x.title.toLowerCase()));
       if (add.length) { c = [...c, ...add]; await kv.set("courses", c); }
@@ -510,6 +514,38 @@ const weakTopics = (results) => {
   return Object.values(t).filter((x) => x.n >= 2).map((x) => ({ ...x, pct: Math.round((100 * x.ok) / x.n) })).sort((a, b) => a.pct - b.pct).slice(0, 8);
 };
 app.get("/api/stats", wrap(async (q, res) => res.json(weakTopics(await kv.get("results", [])))));
+
+// ---- practice: timed mock exam, OSCE stations, patient simulator ----
+app.post("/api/mock", wrap(async (req, res) => {
+  const { courseId, kind = "mcq", prompt = "" } = req.body;
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  const ctx = `Course: ${course?.title || "general medicine"}. Focus: ${prompt || "whole course"}\n\n${await context(courseId)}`;
+  if (kind === "osce") {
+    const raw = await claude('Return ONLY a JSON object {"station":string,"scenario":string (what the candidate is told),"task":string,"checklist":[10-14 short marking points],"pitfalls":[3-5 strings]} for one OSCE station (history, examination, procedure or communication) suited to the course. Use plain text.', ctx, 3000, { json: true });
+    return res.json({ osce: parseJSON(raw) });
+  }
+  const questions = parseJSON(await claude('Return ONLY a JSON array of 10 exam-style questions [{"topic":string (2-3 words),"q":string (a short clinical vignette with age, sex, presentation and findings, then the question),"options":[5 strings],"answer":index 0-4,"why":string}]. Test reasoning, not recall.', ctx, 6000));
+  res.json({ questions });
+}));
+app.post("/api/sim", wrap(async (req, res) => {
+  const { courseId, hidden, log = [], say = "" } = req.body;
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  if (!hidden) {
+    const raw = await claude('Return ONLY JSON {"case":"hidden case file: age, sex, background, true diagnosis, history details, exam and investigation findings, red herrings","opening":"the patient\'s first sentence to the doctor, in plain everyday words"} for a realistic patient suited to a medical student studying: ' + (course?.title || "general medicine") + (say ? ". Preference: " + say : "") + ". Vary age, sex and setting (a Zambian clinic or hospital is fine).", "Create the case.", 2500, { json: true });
+    return res.json(parseJSON(raw));
+  }
+  const sys = `You are role-playing a patient for a medical student's practice. Hidden case file (never reveal the diagnosis unless the student commits to one):\n${String(hidden).slice(0, 4000)}\nRules: answer only what is asked, in short everyday language, like a real patient. If the student asks to examine or order a test, give the finding from the case file in square brackets, e.g. [BP 150/95]. If they start a message with "Diagnosis:", step out of role and give brief feedback: what they got right, what they missed, key questions they skipped, and a better next step. Educational only.`;
+  const convo = log.slice(-24).map((m) => (m.who === "me" ? "Doctor: " : "Patient: ") + String(m.text).slice(0, 600)).join("\n");
+  res.json({ reply: await claude(sys, `${convo}\nDoctor: ${String(say).slice(0, 800)}\nPatient:`, 800) });
+}));
+// turn the topics you get wrong into planner items
+app.post("/api/plan/weak", wrap(async (req, res) => {
+  const weak = weakTopics(await kv.get("results", [])).filter((x) => x.pct < 70).slice(0, 5);
+  const plan = await kv.get("plan", []); let n = 0;
+  const day = (i) => { const d = new Date(Date.now() + i * 864e5); return d.toISOString().slice(0, 10); };
+  weak.forEach((w, i) => { const title = "Revise: " + w.topic + " (" + w.pct + "% right)"; if (!plan.some((p) => p.title === title && !p.done)) { plan.push({ id: id(), title, date: day(i + 1), done: false }); n++; } });
+  await kv.set("plan", plan); res.json({ added: n });
+}));
 
 // ---- study planner ----
 app.get("/api/plan", wrap(async (q, res) => res.json([...(await kv.get("plan", []))].sort((a, b) => (a.date || "9").localeCompare(b.date || "9")))));

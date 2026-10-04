@@ -4,7 +4,7 @@ A private study workspace for medical school. Single user.
 
 ## What it does
 
-- 5 years (MBChB length), each with courses and topics. The starter list is a typical layout, not any university's official outline. Use Course outline to import your own school's outline or edit freely
+- 5 years (MBChB, following Lusaka Apex Medical University), each with courses and topics. The starter list is a typical layout, not any university's official outline. Use Course outline to import your own school's outline or edit freely
 - Materials per course: notes, web links, files, and 3D lessons (embed link such as a Sketchfab URL, or upload a `.glb`/`.gltf`)
 - Translate to English: paste text or a link in any language, or tick the box when saving a material
 - Study help: ask questions, make study guides and quizzes from your own materials
@@ -14,6 +14,12 @@ A private study workspace for medical school. Single user.
 - Anki: export and import cards as Anki text files
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
+
+New in 0.7:
+
+- **5-year MBChB layout** (reference: Lusaka Apex Medical University, 5 years, then internship). Year 6 is gone: any old Year 6 courses move into Year 5 once, keeping their materials, cards and progress. About 25 new courses were added across years 1 to 5 (Neuroscience, Cardiology, Pulmonology, Gastroenterology, Nephrology, Haematology, Rheumatology, Geriatrics, Urology, Neurosurgery, Paediatric Surgery, Cardiothoracic Surgery, Palliative Care, ECG & Imaging, Clinical Research Project and more). The university does not publish its year-by-year course list, so this is a typical Zambian layout: use Course outline to match your handbook
+- **Practice** (new menu item): timed mock exam with clinical-vignette questions, OSCE stations with a marking checklist, an AI patient simulator (history, exam, tests, then "Diagnosis:" for feedback), and clinical calculators (GCS, CURB-65, CHA2DS2-VASc, Wells PE, anion gap, corrected calcium, eGFR)
+- **Weak topics to planner**: after a mock exam, one tap adds revision items for the topics you get wrong
 
 New in 0.6:
 
