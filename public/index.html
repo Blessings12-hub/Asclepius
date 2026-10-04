@@ -112,7 +112,7 @@ header{padding-top:calc(12px + env(safe-area-inset-top));padding-left:max(18px,e
 .sgh{background:var(--head);color:var(--headfg);border-radius:10px;padding:14px 16px;margin:6px 0 10px;border-bottom:4px solid var(--acc)}.sgh h3{color:var(--headfg);margin:0 0 4px;font-size:21px}.sgh p{margin:0;opacity:.92}
 .sgs{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:0 14px}
 .sgs>summary{font-family:Georgia,serif;font-weight:700;font-size:17px;padding:11px 0 11px 10px;margin-left:-14px;padding-left:24px;cursor:pointer;border-left:4px solid var(--acc)}
-.pts{margin:.2em 0 .8em;padding-left:1.2em}.pts li{margin:.4em 0}.pts b{color:var(--acc)}.mn{font-style:italic;color:var(--acc);margin:0 0 10px}
+.pts{margin:.2em 0 .8em;padding-left:1.2em}.pts li{margin:.4em 0}.pts b{color:var(--acc)}.mn{font-style:italic;color:var(--acc);margin:0 0 10px}.cl{background:var(--sel);border-radius:6px;padding:8px 10px;margin:8px 0}.sgs>p{margin:.5em 0}
 .co{border-radius:8px;padding:10px 14px;margin:10px 0;border-left:5px solid}.co h4{margin:0 0 2px;font-family:Georgia,serif;font-size:16px}.hy{background:var(--okbg);border-color:var(--acc)}.pf{background:var(--badbg);border-color:var(--bad)}.co .pts b{color:inherit}
 .sgq h4{font-family:Georgia,serif;font-size:17px;margin:14px 0 2px}.sgq details{border-bottom:1px solid var(--line);padding:8px 0}.sgq summary{cursor:pointer}.sgq details p{margin:.5em 0 .2em 1.4em;color:var(--muted)}
 .acts button{font-size:14px}.dk h3{font-size:19px}.ds{display:flex;gap:12px;border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;background:var(--card)}
@@ -278,7 +278,7 @@ async function viewOutline(){courses=await api("/api/courses");drawNav();
  $("#main").innerHTML=`<h2>Course outline</h2><p class="sm muted">Organise your courses and topics by year. Nothing here is deleted unless you press Delete.</p>
  <div class="card"><h3>Import your school's outline</h3><p class="sm muted">Paste the programme outline text from your handbook or syllabus (any language). The AI reads it and shows you a preview first. It is told to use only what the text says, but check the preview.</p>
  <textarea id="ot" rows="6" placeholder="Paste the outline here"></textarea><div class="row"><button class="p" id="op">Read outline</button><span id="os" class="muted"></span></div><div id="opv"></div></div>
- <div class="card"><h3>Starter 5-year structure</h3><p class="sm muted">A typical MBChB layout I wrote from general knowledge. It is <b>not</b> any university's official outline. Adding it keeps what you have and only adds what is missing.</p><div class="row"><button id="st5">Add the starter structure</button><span id="ss" class="muted"></span></div></div>
+ <div class="card"><h3>Starter 6-year structure</h3><p class="sm muted">A typical MBChB layout I wrote from general knowledge. It is <b>not</b> any university's official outline. Adding it keeps what you have and only adds what is missing.</p><div class="row"><button id="st5">Add the starter structure</button><span id="ss" class="muted"></span></div></div>
  <div class="card"><h3>Add a course</h3><div class="row"><input id="nt" placeholder="Course name"><input id="ny" type="number" min="1" max="8" value="1" style="width:5em"><button id="na">Add</button></div></div>
  ${grp}`;
  const reload=()=>viewOutline();
@@ -322,42 +322,94 @@ function md(src){const L=String(src||"").replace(/\r/g,"").split("\n");let h="",
  shut();return h}
 const pts=a=>`<ul class="pts">${a.map(t=>{const m=/^(.{2,42}?):\s+(.+)$/.exec(t);return `<li>${m?`<b>${esc(m[1])}</b> ${esc(m[2])}`:esc(t)}</li>`}).join("")}</ul>`;
 const srcLinks=a=>(a||[]).length?`<p class="sm muted">Read more: ${a.map(x=>x.url&&safeUrl(x.url)?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>`:esc(x.title)).join(" · ")}</p>`:"";
-function guideHTML(g){return `<div class="sg"><div class="sgh"><h3>${esc(g.title)}</h3>${g.overview?`<p>${esc(g.overview)}</p>`:""}</div>`+
- g.sections.map((s,i)=>`<details class="sgs"${i<2?" open":""}><summary>${esc(s.heading)}</summary>${pts(s.points)}${s.mnemonic?`<p class="mn">Memory aid: ${esc(s.mnemonic)}</p>`:""}</details>`).join("")+
+function guideHTML(g){
+ const tb=t=>`<div class="tw">${t.title?`<p class="sm"><b>${esc(t.title)}</b></p>`:""}<table class="ref"><thead><tr>${t.head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${t.rows.map(r=>`<tr>${r.map((c,i)=>`<td data-label="${esc(t.head[i])}">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+ const rf=a=>a&&a.length?`<p class="sm muted">Sources for this section: ${a.map(n=>`[${n}]`).join(" ")}</p>`:"";
+ const ln=(x,t)=>x.url&&safeUrl(x.url)?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(t)}</a>`:esc(t);
+ const rep=(g.report||[]).length?`<p class="sm muted">Websites read: ${g.report.map(r=>`${esc(r.site)} ${r.ok?"✓ ("+r.count+")":"✗"}`).join(" · ")}</p>`:"";
+ return `<div class="sg"><div class="sgh"><h3>${esc(g.title)}</h3>${g.overview?`<p>${esc(g.overview)}</p>`:""}</div>`+rep+
+ (g.objectives.length?`<div class="co hy"><h4>What you should know after this</h4>${pts(g.objectives)}</div>`:"")+
+ g.sections.map((s,i)=>`<details class="sgs"${i<1?" open":""}><summary>${i+1}. ${esc(s.heading)}</summary>${s.intro?`<p>${esc(s.intro)}</p>`:""}${pts(s.points)}${s.table?tb(s.table):""}${s.mnemonic?`<p class="mn">Memory aid: ${esc(s.mnemonic)}</p>`:""}${s.clinical?`<p class="cl"><b>Clinical link:</b> ${esc(s.clinical)}</p>`:""}${rf(s.refs)}</details>`).join("")+
+ (g.glossary.length?`<details class="sgs"><summary>Glossary (${g.glossary.length} terms)</summary>${pts(g.glossary.map(x=>x.term+": "+x.def))}</details>`:"")+
  (g.high_yield.length?`<div class="co hy"><h4>High-yield</h4>${pts(g.high_yield)}</div>`:"")+(g.pitfalls.length?`<div class="co pf"><h4>Common pitfalls</h4>${pts(g.pitfalls)}</div>`:"")+
- (g.questions.length?`<div class="sgq"><h4>Test yourself</h4><p class="sm muted">Think first, then tap a question to see the answer.</p>${g.questions.map((x,i)=>`<details><summary><b>${i+1}.</b> ${esc(x.q)}</summary><p>${esc(x.a)}</p></details>`).join("")}</div>`:"")+srcLinks(g.sources)+`</div>`}
-const guideTxt=g=>[g.title,"",g.overview,"",...g.sections.flatMap(s=>[s.heading.toUpperCase(),...s.points.map(p=>"- "+p),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),""]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
+ (g.questions.length?`<div class="sgq"><h4>Test yourself</h4><p class="sm muted">Think first, then tap a question to see the answer.</p>${g.questions.map((x,i)=>`<details><summary><b>${i+1}.</b> ${esc(x.q)}</summary><p>${esc(x.a)}</p></details>`).join("")}</div>`:"")+
+ (g.sources.length?`<details class="sgs"><summary>Sources (${g.sources.length})</summary><ol class="sm">${g.sources.map(x=>`<li value="${x.n}"><b>${esc(x.site)}</b>: ${ln(x,x.title)}${(x.links||[]).map(l=>` · ${ln(l,l.title||"page")}`).join("")}</li>`).join("")}</ol></details>`:"")+`</div>`}
+const guideTxt=g=>[g.title,"",g.overview,"",...(g.objectives.length?["WHAT YOU SHOULD KNOW",...g.objectives.map(p=>"- "+p),""]:[]),...g.sections.flatMap((s,i)=>[`${i+1}. ${s.heading.toUpperCase()}`,...(s.intro?[s.intro]:[]),...s.points.map(p=>"- "+p),...(s.table?[s.table.head.join(" | "),...s.table.rows.map(r=>r.join(" | "))]:[]),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),...(s.clinical?["Clinical link: "+s.clinical]:[]),""]),...(g.glossary.length?["GLOSSARY",...g.glossary.map(x=>`- ${x.term}: ${x.def}`),""]:[]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
 const saveBlob=(b,name)=>{const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)};
 const fname=t=>(String(t||"").replace(/[^\w\- ]+/g,"").trim().slice(0,60)||"study");
 const jpost=(u,b)=>api(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
-function showAnswer(id,r,pr){const o=$("#out"),g=r.guide,text=g?guideTxt(g):r.text||"";
- o.innerHTML=(g?guideHTML(g):`<div class="md">${md(text)}</div>`)+`<div class="row acts">${g?`<button class="p" id="gp">Download PDF</button>`:""}<button id="gs">Save to my notes</button>${g?`<button id="gf">Make flashcards</button>`:""}<button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function runPool(n,items,fn){let i=0;await Promise.all(Array.from({length:Math.min(n,items.length)},async()=>{while(i<items.length){const k=i++;await fn(items[k],k)}}))}
+const twice=async f=>{try{return await f()}catch(e){if(e.message==="login")throw e;await sleep(4500);return await f()}};
+// Deep study guide, built in steps (each step is its own request, so nothing hits the host's time limit)
+async function buildGuide(id,topic,say){
+ say("Step 1 of 4: reading many websites (StatPearls, Wikipedia, MedlinePlus, Wikibooks, PubMed, web search). About 20 seconds…");
+ const rs=await jpost("/api/research",{courseId:id,topic});
+ const okSites=rs.report.filter(r=>r.ok).length;
+ say(`Step 2 of 4: read ${rs.sources.length} pages from ${okSites} websites. Planning the guide…`);
+ const ol=await jpost("/api/guide/outline",{courseId:id,topic,research:rs});
+ const total=ol.sections.length,secs=new Array(total);let done=0,failed=0;
+ await runPool(3,ol.sections,async(_,k)=>{
+  try{secs[k]=(await twice(()=>jpost("/api/guide/section",{courseId:id,topic,research:rs,outline:ol,index:k}))).section}catch(e){if(e.message==="login")throw e;failed++}
+  done++;say(`Step 3 of 4: writing section ${done} of ${total}…`)});
+ const got=secs.filter(Boolean);
+ if(got.length<3)throw new Error("Could not write enough sections. The free AI limit may be reached. Wait a minute and try again.");
+ say("Step 4 of 4: glossary, high-yield facts and practice questions…");
+ let ex={glossary:[],high_yield:[],pitfalls:[],questions:[]};
+ try{ex=(await twice(()=>jpost("/api/guide/extras",{courseId:id,topic,research:rs,outline:ol,digest:got.map(s=>`${s.heading}: ${s.intro} ${s.points.slice(0,4).join(" ")}`)}))).extras}catch(e){if(e.message==="login")throw e}
+ const g={title:ol.title,overview:ol.overview,objectives:ol.objectives,sections:got,...ex,sources:rs.sources.map(({text,...r})=>r),report:rs.report};
+ if(failed)g.overview+=` (${failed} section${failed>1?"s":""} could not be written this time. Build the guide again to fill ${failed>1?"them":"it"} in.)`;
+ return g}
+let guideCur=null;
+function showGuide(id,g,topic,compact){const o=$("#out");guideCur={id,g,topic};const text=guideTxt(g);
+ const bar=`<div class="row acts"><button class="p" id="gp">Download guide PDF</button>${compact?"":`<button id="gm">Make presentation from this guide</button>`}<button id="gs">Save to my notes</button><button id="gf">Make flashcards</button><button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
+ o.innerHTML=compact?`<div class="card"><h3>Study guide ready: ${esc(g.title)}</h3><p class="sm muted">${g.sections.length} sections, ${g.glossary.length} glossary terms, ${g.questions.length} practice questions, ${g.sources.length} sources.</p>${bar}<details><summary>Read the guide here</summary>${guideHTML(g)}</details></div>`:guideHTML(g)+bar;
  const say=t=>{const e=$("#am");if(e)e.textContent=t};
- if(g)$("#gp").onclick=async()=>{say("Building PDF…");try{saveBlob(await jpost("/api/guide/pdf",{guide:g,courseId:id}),fname(g.title)+".pdf");say("")}catch(e){say(e.message)}};
- $("#gs").onclick=async()=>{try{await post("/api/materials",{courseId:id,type:"note",title:(g?g.title:pr||"Study help").slice(0,100),body:text,translate:"0"});say("Saved. It shows in the materials list when you reopen this course.")}catch(e){say(e.message)}};
- if(g)$("#gf").onclick=async()=>{say("Making flashcards…");try{say(`Added ${(await post("/api/cards/generate",{courseId:id,prompt:g.title})).added} cards. Review them under Today.`)}catch(e){say(e.message)}};
+ $("#gp").onclick=async()=>{say("Building PDF…");try{saveBlob(await jpost("/api/guide/pdf",{guide:g,courseId:id}),fname(g.title)+" - study guide.pdf");say("")}catch(e){say(e.message)}};
+ if($("#gm"))$("#gm").onclick=()=>{$("#pr").value=topic;makeDeck(id,topic)};
+ $("#gs").onclick=async()=>{try{await post("/api/materials",{courseId:id,type:"note",title:g.title.slice(0,100),body:text,translate:"0"});say("Saved. It shows in the materials list when you reopen this course.")}catch(e){say(e.message)}};
+ $("#gf").onclick=async()=>{say("Making flashcards…");try{say(`Added ${(await post("/api/cards/generate",{courseId:id,prompt:g.title})).added} cards. Review them under Today.`)}catch(e){say(e.message)}};
+ $("#gc").onclick=async()=>{try{await navigator.clipboard.writeText(text);say("Copied")}catch{say("Could not copy. Select the text and copy it by hand.")}}}
+function showAnswer(id,r,pr){const o=$("#out"),text=r.text||"";
+ o.innerHTML=`<div class="md">${md(text)}</div><div class="row acts"><button id="gs">Save to my notes</button><button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
+ const say=t=>{const e=$("#am");if(e)e.textContent=t};
+ $("#gs").onclick=async()=>{try{await post("/api/materials",{courseId:id,type:"note",title:(pr||"Study help").slice(0,100),body:text,translate:"0"});say("Saved. It shows in the materials list when you reopen this course.")}catch(e){say(e.message)}};
  $("#gc").onclick=async()=>{try{await navigator.clipboard.writeText(text);say("Copied")}catch{say("Could not copy. Select the text and copy it by hand.")}}}
 
-/* ---------- presentation: preview with pictures, then download ---------- */
-let deck=null;
+/* ---------- presentation: short slides made from the guide, preview with pictures, then download ---------- */
+let deck=null,deckGuide=null,deckThemes={};
 const dObj=k=>k===0?deck.cover:deck.slides[k-1];
 const dText=s=>s.layout==="steps"?s.steps.map(x=>x.head):s.layout==="compare"?[s.left.head+" vs "+s.right.head]:s.layout==="facts"?s.facts.map(x=>x.value+" "+x.label):s.bullets;
-function deckHTML(){const row=(k,o,title,lines)=>{const c=o.pick>=0?o.cands[o.pick]:null,n=o.cands.length;
-  return `<div class="ds">${c?`<img src="${esc(c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="ph">${k===0||n?"No picture":"Text slide"}</div>`}<div><b>${esc(title)}</b><ul>${lines.slice(0,3).map(t=>`<li>${esc(t.length>90?t.slice(0,88)+"…":t)}</li>`).join("")}</ul>
+function deckHTML(){const row=(k,o,title,lines,tag)=>{const c=o.pick>=0?o.cands[o.pick]:null,n=o.cands.length;
+  return `<div class="ds">${c?`<img src="${esc(c.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="ph">${k===0||n?"No picture":"Text slide"}</div>`}<div><b>${esc(title)}</b>${tag?` <span class="sm muted">${esc(tag)}</span>`:""}<ul>${lines.slice(0,3).map(t=>`<li>${esc(t.length>90?t.slice(0,88)+"…":t)}</li>`).join("")}</ul>
   ${c?`<div class="cr">${esc(c.credit)}</div>`:""}${n?`<div class="row">${n>1&&c?`<button data-sw="${k}">Another picture (${o.pick+1}/${n})</button>`:""}${c?`<button data-no="${k}">No picture</button>`:`<button data-sw="${k}">Use a picture</button>`}</div>`:""}</div></div>`};
- return `<div class="dk"><h3>${esc(deck.title)}</h3><p class="sm muted">${deck.slides.length+2} slides with outline and sources. Check each picture fits, swap any you do not like, then download.</p>
- <div class="row"><label class="sm">Style <select id="dth">${Object.entries(deckThemes).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join("")}</select></label><button class="p" id="d1">Download PowerPoint</button><button id="d2">Download PDF</button><button id="d3">Both</button><span class="sm muted" id="dm"></span></div>`+
- row(0,deck.cover,"Title slide: "+deck.title,[deck.subtitle].filter(Boolean))+deck.slides.map((s,i)=>row(i+1,s,s.title,dText(s))).join("")+srcLinks(deck.sources)+`</div>`}
-let deckThemes={};
+ return `<div class="dk"><h3>${esc(deck.title)}</h3><p class="sm muted">${deck.slides.length+2} short slides${deckGuide?" that summarise the study guide. The PDF has the full detail":""}. Check each picture fits, swap any you do not like, then download.</p>
+ <div class="row"><label class="sm">Style <select id="dth">${Object.entries(deckThemes).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join("")}</select></label><button class="p" id="d0">${deckGuide?"Download everything (zip)":"Download PowerPoint"}</button></div>
+ <div class="row"><button id="d1">PowerPoint only</button><button id="d2">Slides as PDF</button>${deckGuide?`<button id="d4">Study guide PDF</button>`:""}<span class="sm muted" id="dm"></span></div>`+
+ row(0,deck.cover,"Title slide: "+deck.title,[deck.subtitle].filter(Boolean))+deck.slides.map((s,i)=>row(i+1,s,s.title,dText(s),s.guideSection?`(guide section ${s.guideSection})`:"")).join("")+srcLinks(deck.sources)+`</div>`}
 function wireDeck(id){const box=$("#deck");box.innerHTML=deckHTML();
  box.querySelectorAll("[data-sw]").forEach(b=>b.onclick=()=>{const o=dObj(+b.dataset.sw);o.pick=o.pick<0?0:(o.pick+1)%o.cands.length;wireDeck(id)});
  box.querySelectorAll("[data-no]").forEach(b=>b.onclick=()=>{dObj(+b.dataset.no).pick=-1;wireDeck(id)});
- const slim=o=>({...o,cands:o.pick>=0?[o.cands[o.pick]]:[],pick:o.pick>=0?0:-1});
- const get=async fmt=>{const b=await jpost("/api/deck/export",{deck:{...deck,cover:slim(deck.cover),slides:deck.slides.map(slim)},format:fmt,theme:$("#dth").value});saveBlob(b,fname(deck.title)+"."+fmt)};
- const run=fmts=>async()=>{const m=$("#dm");m.textContent="Building file… this can take 20 seconds";box.querySelectorAll("button").forEach(x=>x.disabled=true);
-  try{for(const f of fmts){await get(f);if(fmts.length>1)await new Promise(r=>setTimeout(r,700))}m.textContent="Downloaded. Check the picture credits on the last slide."}catch(e){m.textContent=e.message}
+ const slim=o=>({...o,cands:o.pick>=0?[o.cands[o.pick]]:[],pick:o.pick>=0?0:-1}),sd=()=>({...deck,cover:slim(deck.cover),slides:deck.slides.map(slim)}),th=()=>$("#dth").value;
+ const jobs={
+  pack:async()=>saveBlob(await jpost("/api/pack/export",{deck:sd(),guide:deckGuide,courseId:id,theme:th()}),fname(deck.title)+".zip"),
+  pptx:async()=>saveBlob(await jpost("/api/deck/export",{deck:sd(),format:"pptx",theme:th()}),fname(deck.title)+" - presentation.pptx"),
+  pdf:async()=>saveBlob(await jpost("/api/deck/export",{deck:sd(),format:"pdf",theme:th()}),fname(deck.title)+" - slides.pdf"),
+  guide:async()=>saveBlob(await jpost("/api/guide/pdf",{guide:deckGuide,courseId:id}),fname(deck.title)+" - study guide.pdf")};
+ const run=k=>async()=>{const m=$("#dm");m.textContent="Building… this can take 20 seconds";box.querySelectorAll("button").forEach(x=>x.disabled=true);
+  try{await jobs[k]();m.textContent=k==="pack"?"Downloaded. Unzip it to get the guide PDF and the PowerPoint.":"Downloaded. Check the picture credits on the last slide."}catch(e){m.textContent=e.message}
   box.querySelectorAll("button").forEach(x=>x.disabled=false)};
- $("#d1").onclick=run(["pptx"]);$("#d2").onclick=run(["pdf"]);$("#d3").onclick=run(["pptx","pdf"])}
+ $("#d0").onclick=run(deckGuide?"pack":"pptx");$("#d1").onclick=run("pptx");$("#d2").onclick=run("pdf");if($("#d4"))$("#d4").onclick=run("guide")}
+// guide first (deep research), then the short slides from it
+async function makeDeck(id,topic){const st=$("#st"),btn=$("#bp"),say=t=>st.textContent=t;
+ $("#out").textContent="";$("#deck").innerHTML="";btn.disabled=$("#ai").disabled=true;
+ try{let g=guideCur&&guideCur.id===id&&guideCur.topic===topic?guideCur.g:null;
+  if(!g)g=await buildGuide(id,topic,say);
+  showGuide(id,g,topic,true);
+  say("Writing the short slides from the guide and searching the web for pictures. About 30 seconds…");
+  const r=await jpost("/api/deck",{courseId:id,topic,guide:g});deck=r.deck;deckGuide=g;deckThemes=r.themes;wireDeck(id);$("#deck").scrollIntoView({behavior:"smooth",block:"start"})}
+ catch(e){$("#out").textContent=e.message}
+ st.textContent="";btn.disabled=$("#ai").disabled=false}
 
 /* ---------- course page ---------- */
 async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$("#crumb").textContent=`Year ${cur.year}`;
@@ -370,13 +422,13 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
  <div id="list">${mats.map(card).join("")||'<p class="muted">No materials yet. Add your first one above.</p>'}</div>
  <div class="card"><h3>Study help</h3><div class="row tabs"><button data-m="chat" class="on">Ask</button><button data-m="guide">Study guide</button><button data-m="quiz">Quiz me</button><button data-m="cards">Flashcards</button><button data-m="ppt">Presentation</button></div>
- <textarea id="pr" placeholder="Ask a question about this course"></textarea><div class="row"><button class="p" id="ai">Ask</button><label id="popt" class="sm" hidden>Slides <select id="ns"><option>8</option><option>10</option><option selected>12</option><option>14</option><option>16</option></select></label><button class="p" id="bp" hidden>Build presentation</button><span id="st" class="muted"></span></div><div id="out" class="out"></div><div id="deck"></div>
+ <textarea id="pr" placeholder="Ask a question about this course"></textarea><div class="row"><button class="p" id="ai">Ask</button><span id="popt" class="sm muted" hidden>Writes the detailed guide first, then short slides from it</span><button class="p" id="bp" hidden>Build guide + presentation</button><span id="st" class="muted"></span></div><div id="out" class="out"></div><div id="deck"></div>
  <div class="row"><a href="/api/anki/export?courseId=${id}" download>Export cards for Anki</a><label class="muted fl">Import from Anki <input type="file" id="ai2" accept=".txt,.tsv,.csv"></label></div></div>`;
  let mode="chat";
  document.querySelectorAll(".tp").forEach(b=>b.onclick=()=>{$("#pr").value=cur.topics[+b.dataset.i];$("#pr").scrollIntoView({behavior:"smooth",block:"center"});$("#pr").focus()});
  $("#foc").onclick=()=>{T.courseId=id;saveT();go("focus")};
  const mt=$("#mt");mt.onchange=()=>{$("#fl").accept=mt.value==="photo"?"image/*":"";$("#ur").hidden=!["link","3d"].includes(mt.value)};
-  const PH={chat:"Ask a question about this course",guide:"Topic for the study guide (leave empty for the whole course)",quiz:"Topic to be quizzed on (optional)",cards:"Topic for the flashcards (optional)",ppt:"Presentation topic, for example: Heart failure"},GO={chat:"Ask",guide:"Make study guide",quiz:"Start quiz",cards:"Make flashcards"};
+  const PH={chat:"Ask a question about this course",guide:"Topic for the study guide (leave empty for the whole course)",quiz:"Topic to be quizzed on (optional)",cards:"Topic for the flashcards (optional)",ppt:"Topic, for example: Heart failure. A detailed guide is written first, then the short slides."},GO={chat:"Ask",guide:"Build detailed study guide",quiz:"Start quiz",cards:"Make flashcards"};
  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{mode=b.dataset.m;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
   const ppt=mode==="ppt";$("#bp").hidden=$("#popt").hidden=!ppt;$("#ai").hidden=ppt;$("#ai").textContent=GO[mode]||"Go";$("#pr").placeholder=PH[mode]});
  $("#ai2").onchange=async e=>{try{const r=await post("/api/anki/import",{courseId:id,text:await e.target.files[0].text()});$("#out").textContent=`Imported ${r.added} cards. Review them under Today.`}catch(x){$("#out").textContent=x.message}};
@@ -390,14 +442,13 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
     else{const f=new FormData();Object.entries(base).forEach(([k,v])=>f.append(k,v));f.append("file",ph);r=await api("/api/materials",{method:"POST",body:f})}}
    else r=await post("/api/materials",base);
    if(r&&r.warning)flash=r.warning;open(id)}catch(e){e1.textContent=e.message}finally{$("#sv").disabled=false}};
- deck=null;
+ deck=null;deckGuide=null;
  $("#ai").onclick=async()=>{const st=$("#st"),o=$("#out"),pr=$("#pr").value.trim(),btn=$("#ai");if(mode==="chat"&&!pr){o.textContent="Type a question first.";return}
-  st.textContent=mode==="guide"?"Researching and writing your study guide. This takes a little while…":"Thinking…";o.textContent="";btn.disabled=true;
-  try{if(mode==="quiz")await runQuiz(id,pr);else if(mode==="cards")o.textContent=`Added ${(await post("/api/cards/generate",{courseId:id,prompt:pr})).added} cards. Review them under Today.`;else showAnswer(id,await post("/api/ai",{courseId:id,mode,prompt:pr}),pr)}catch(e){o.textContent=e.message}
+  st.textContent="Thinking…";o.textContent="";btn.disabled=true;
+  try{if(mode==="guide"){const topic=pr||cur.title;showGuide(id,await buildGuide(id,topic,t=>st.textContent=t),topic,false)}
+   else if(mode==="quiz")await runQuiz(id,pr);else if(mode==="cards")o.textContent=`Added ${(await post("/api/cards/generate",{courseId:id,prompt:pr})).added} cards. Review them under Today.`;else showAnswer(id,await post("/api/ai",{courseId:id,mode,prompt:pr}),pr)}catch(e){o.textContent=e.message}
   st.textContent="";btn.disabled=false};
- $("#bp").onclick=async()=>{const st=$("#st"),btn=$("#bp");st.textContent="Researching the topic, writing the slides and searching for pictures. This can take up to a minute…";$("#out").textContent="";$("#deck").innerHTML="";btn.disabled=true;
-  try{const r=await jpost("/api/deck",{courseId:id,topic:$("#pr").value.trim()||cur.title,slides:+$("#ns").value});deck=r.deck;deckThemes=r.themes;wireDeck(id);$("#deck").scrollIntoView({behavior:"smooth",block:"start"})}catch(e){$("#out").textContent=e.message}
-  st.textContent="";btn.disabled=false};
+ $("#bp").onclick=()=>makeDeck(id,$("#pr").value.trim()||cur.title);
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(confirm("Delete this material?")){await api("/api/materials/"+b.dataset.del,{method:"DELETE"});open(id)}})}
 function card(m){let v="";const u=safeUrl(m.url);
  if(m.type==="3d"){v=/\.(glb|gltf)$/i.test(m.file)?`<model-viewer src="/files/${m.file}" camera-controls auto-rotate></model-viewer>`:u?`<iframe src="${esc(u)}" allowfullscreen></iframe>`:""}
