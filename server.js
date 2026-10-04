@@ -627,6 +627,22 @@ app.post("/api/qbank/generate", wrap(async (req, res) => {
   if (!items.length) throw new Error("No questions came back. Try again.");
   await docs.putMany("qbank", items); res.json({ added: items.length });
 }));
+// paste your own question(s) in any language: translated to English, answered, and saved with the other questions
+app.post("/api/qbank/ask", wrap(async (req, res) => {
+  const { courseId } = req.body, text = String(req.body.text || "").trim(), kind = QKINDS[req.body.kind] ? req.body.kind : "own";
+  const course = (await getCourses()).find((c) => c.id === courseId);
+  if (!course) throw bad("Pick a course first");
+  if (text.length < 8) throw bad("Paste the question first");
+  const raw = await claude('The student pastes one or more exam questions in ANY language (one question, or several numbered ones; a question may include answer options or lab values). Return ONLY a JSON array (at most 10 items) [{"lang":string (name of the original language, in English),"orig":string (that question exactly as pasted),"topic":string (2-4 words),"q":string (the question translated into English; keep numbers, units, options and drug names exact; if it is already English keep it unchanged),"a":string (a complete model answer in English: the key points, a short reason, and the usual next step if clinical; for multiple choice name the correct option and say why the others are wrong)}]. Split into separate items only when they are clearly separate questions. Plain text, no Markdown. Do not invent facts or values: if something is uncertain or the question is ambiguous, say so inside the answer.', `Course: ${course.title} (Zambian MBChB)\n\nQUESTIONS:\n${text.slice(0, 12000)}`, 7000);
+  const list = parseJSON(raw);
+  if (!Array.isArray(list)) throw new Error("The AI answer was not in the expected format. Try again.");
+  const items = list.filter((x) => x && x.q && x.a).slice(0, 10).map((x) => {
+    const lang = String(x.lang || "").slice(0, 40), eng = /^english$/i.test(lang);
+    return { id: id(), courseId, kind, own: true, topic: String(x.topic || "").slice(0, 60), q: String(x.q).slice(0, 1500), a: String(x.a).slice(0, 2500), lang: eng ? "" : lang, orig: eng ? "" : String(x.orig || "").slice(0, 1500), at: Date.now() };
+  });
+  if (!items.length) throw new Error("No answer came back. Try again.");
+  await docs.putMany("qbank", items); res.json({ added: items.length, lang: items[0].lang });
+}));
 app.delete("/api/qbank/:id", wrap(async (req, res) => { await docs.del("qbank", req.params.id); res.json({ ok: 1 }); }));
 
 // ---- microscopy slides: Wikimedia Commons images (open licences), saved per course, AI problems per slide ----
