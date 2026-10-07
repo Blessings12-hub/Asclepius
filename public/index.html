@@ -57,6 +57,7 @@ a{color:var(--acc)}
 .phase{font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
 label.f{display:block;font-size:14px;color:var(--muted)}label.f input,label.f textarea{margin-top:2px;color:var(--ink)}
+.eq{background:var(--card);border:1px solid var(--line);border-left:4px solid #2FB58C;border-radius:8px;padding:8px 10px;margin:6px 0}.eqf{font-size:1.08em;margin:3px 0;word-break:break-word}.dg svg{display:block;margin:0 auto}.fg{margin:10px 0;text-align:center}.fg img{max-width:100%;max-height:340px;background:#fff;border-radius:8px}.fg figcaption{text-align:left;margin-top:4px}
 table.ref{width:100%;border-collapse:collapse}
 table.ref th{text-align:left;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line);padding:6px 8px}
 table.ref td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -331,12 +332,61 @@ function guideHTML(g){
  const rep=(g.report||[]).length?`<p class="sm muted">Websites read: ${g.report.map(r=>`${esc(r.site)} ${r.ok?"✓ ("+r.count+")":"✗"}`).join(" · ")}</p>`:"";
  return `<div class="sg"><div class="sgh"><h3>${esc(g.title)}</h3>${g.overview?`<p>${esc(g.overview)}</p>`:""}</div>`+rep+
  (g.objectives.length?`<div class="co hy"><h4>What you should know after this</h4>${pts(g.objectives)}</div>`:"")+
- g.sections.map((s,i)=>`<details class="sgs"${i<1?" open":""}><summary>${i+1}. ${esc(s.heading)}</summary>${s.intro?`<p>${esc(s.intro)}</p>`:""}${pts(s.points)}${(s.tables&&s.tables.length?s.tables:(s.table?[s.table]:[])).map(tb).join("")}${s.script?`<p class="cl"><b>What to say:</b> ${esc(s.script)}</p>`:""}${s.mnemonic?`<p class="mn">Memory aid: ${esc(s.mnemonic)}</p>`:""}${s.clinical?`<p class="cl"><b>Clinical link:</b> ${esc(s.clinical)}</p>`:""}${rf(s.refs)}</details>`).join("")+
+ g.sections.map((s,i)=>`<details class="sgs"${i<1?" open":""}><summary>${i+1}. ${esc(s.heading)}</summary>${s.intro?`<p>${esc(s.intro)}</p>`:""}${eqHTML(s.equations)}${s.diagram?diagSvg(s.diagram):""}${figHTML(s.figure)}${pts(s.points)}${(s.tables&&s.tables.length?s.tables:(s.table?[s.table]:[])).map(tb).join("")}${s.script?`<p class="cl"><b>What to say:</b> ${esc(s.script)}</p>`:""}${s.mnemonic?`<p class="mn">Memory aid: ${esc(s.mnemonic)}</p>`:""}${s.clinical?`<p class="cl"><b>Clinical link:</b> ${esc(s.clinical)}</p>`:""}${rf(s.refs)}</details>`).join("")+
  (g.glossary.length?`<details class="sgs"><summary>Glossary (${g.glossary.length} terms)</summary>${pts(g.glossary.map(x=>x.term+": "+x.def))}</details>`:"")+
  (g.high_yield.length?`<div class="co hy"><h4>High-yield</h4>${pts(g.high_yield)}</div>`:"")+(g.pitfalls.length?`<div class="co pf"><h4>Common pitfalls</h4>${pts(g.pitfalls)}</div>`:"")+
  (g.questions.length?`<div class="sgq"><h4>Test yourself</h4><p class="sm muted">Think first, then tap a question to see the answer.</p>${g.questions.map((x,i)=>`<details><summary><b>${i+1}.</b> ${esc(x.q)}</summary><p>${esc(x.a)}</p></details>`).join("")}</div>`:"")+
  (g.sources.length?`<details class="sgs"><summary>Sources (${g.sources.length})</summary><ol class="sm">${g.sources.map(x=>`<li value="${x.n}"><b>${esc(x.site)}</b>: ${ln(x,x.title)}${(x.links||[]).map(l=>` · ${ln(l,l.title||"page")}`).join("")}</li>`).join("")}</ol></details>`:"")+`</div>`}
-const guideTxt=g=>[g.title,"",g.overview,"",...(g.objectives.length?["WHAT YOU SHOULD KNOW",...g.objectives.map(p=>"- "+p),""]:[]),...g.sections.flatMap((s,i)=>[`${i+1}. ${s.heading.toUpperCase()}`,...(s.intro?[s.intro]:[]),...s.points.map(p=>"- "+p),...(s.tables&&s.tables.length?s.tables:(s.table?[s.table]:[])).flatMap(t=>[...(t.title?[t.title]:[]),t.head.join(" | "),...t.rows.map(r=>r.join(" | "))]),...(s.script?["What to say: "+s.script]:[]),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),...(s.clinical?["Clinical link: "+s.clinical]:[]),""]),...(g.glossary.length?["GLOSSARY",...g.glossary.map(x=>`- ${x.term}: ${x.def}`),""]:[]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
+/* ---------- reactions, pathway diagrams and pictures inside guides ---------- */
+function layoutDiagram(d) {
+  const n = d.nodes.length, cw = 6.4, cut = (s, m) => String(s || "").slice(0, m);
+  const tw = (s) => Math.ceil(String(s).length * cw);
+  const boxes = [], arrows = [], labels = [];
+  if (d.type === "cycle") {
+    const bw = d.nodes.map((t) => Math.min(190, tw(cut(t, 30)) + 16)), bh = 24;
+    const R = Math.max(120, n * 15 + 30), cx = R + 150, cy = R + 55, W = cx * 2, H = cy * 2;
+    const pos = d.nodes.map((_, i) => { const a = -Math.PI / 2 + (2 * Math.PI * i) / n; return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a }; });
+    d.nodes.forEach((t, i) => boxes.push({ x: pos[i].x - bw[i] / 2, y: pos[i].y - bh / 2, w: bw[i], h: bh, t: cut(t, 30) }));
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n, a = pos[i], b = pos[j], dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+      // start and end the arrow on the edge of each box
+      const edge = (p, w, s) => { const tx = (w / 2 + 3) / Math.max(1e-6, Math.abs(ux)), ty = (bh / 2 + 3) / Math.max(1e-6, Math.abs(uy)); const k = Math.min(tx, ty); return { x: p.x + s * ux * k, y: p.y + s * uy * k }; };
+      const p1 = edge(a, bw[i], 1), p2 = edge(b, bw[j], -1);
+      if (Math.hypot(p2.x - p1.x, p2.y - p1.y) > 6) arrows.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+      const s = d.steps[i]; if (!s) continue;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, ox = mx - cx, oy = my - cy, ol = Math.hypot(ox, oy) || 1;
+      const lx = mx + (ox / ol) * 34, ly = my + (oy / ol) * 22, side = ox > 8 ? "start" : ox < -8 ? "end" : "middle";
+      if (s.label) labels.push({ x: lx, y: ly, t: cut(s.label, 24), anchor: side, bold: true });
+      const sub = [s.in ? "+ " + cut(s.in, 16) : "", s.out ? "→ " + cut(s.out, 16) : ""].filter(Boolean).join("  ");
+      if (sub) labels.push({ x: lx, y: ly + 12, t: sub, anchor: side, small: true });
+    }
+    return { w: W, h: H, boxes, arrows, labels };
+  }
+  // chain: one column, arrows pointing down, the enzyme on the right of each arrow, what is used on the left
+  const bw = Math.min(230, Math.max(...d.nodes.map((t) => tw(cut(t, 36)) + 18)), 230), bh = 26, gap = 40, cx = 250, W = cx * 2;
+  d.nodes.forEach((t, i) => {
+    const y = 10 + i * (bh + gap);
+    boxes.push({ x: cx - bw / 2, y, w: bw, h: bh, t: cut(t, 36) });
+    if (i < n - 1) {
+      arrows.push({ x1: cx, y1: y + bh + 2, x2: cx, y2: y + bh + gap - 2 });
+      const s = d.steps[i]; if (!s) return;
+      const my = y + bh + gap / 2 + 4;
+      if (s.label) labels.push({ x: cx + 10, y: my - (s.out ? 5 : 0), t: cut(s.label, 34), anchor: "start", bold: true });
+      if (s.out) labels.push({ x: cx + 10, y: my + 7, t: "→ " + cut(s.out, 30), anchor: "start", small: true });
+      if (s.in) labels.push({ x: cx - 10, y: my, t: "+ " + cut(s.in, 30), anchor: "end", small: true });
+    }
+  });
+  return { w: W, h: 10 + n * (bh + gap) - gap + 10, boxes, arrows, labels };
+}
+function diagSvg(d){const G=layoutDiagram(d),X=v=>Math.round(v*10)/10;
+ return `<div class="dg"><p class="sm"><b>${esc(d.title||"Pathway")}</b></p><div class="tw"><svg viewBox="0 0 ${X(G.w)} ${X(G.h)}" style="width:100%;max-width:${Math.round(G.w*1.15)}px;height:auto" role="img" aria-label="${esc(d.title||"Pathway")}"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1F7A5C"/></marker></defs>`+
+ G.arrows.map(a=>`<line x1="${X(a.x1)}" y1="${X(a.y1)}" x2="${X(a.x2)}" y2="${X(a.y2)}" stroke="#1F7A5C" stroke-width="1.6" marker-end="url(#ah)"/>`).join("")+
+ G.boxes.map(b=>`<rect x="${X(b.x)}" y="${X(b.y)}" width="${X(b.w)}" height="${X(b.h)}" rx="5" fill="var(--card,#fff)" stroke="#1F7A5C" stroke-width="1.4"/><text x="${X(b.x+b.w/2)}" y="${X(b.y+b.h/2+4)}" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">${esc(b.t)}</text>`).join("")+
+ G.labels.map(l=>`<text x="${X(l.x)}" y="${X(l.y)}" text-anchor="${l.anchor}" font-size="${l.small?10.5:11.5}" ${l.bold?'font-weight="700" fill="#1F7A5C"':'fill="currentColor" opacity=".75"'}>${esc(l.t)}</text>`).join("")+
+ `</svg></div><p class="sm muted">${d.type==="chain"?"Left of an arrow: what is used. Right: the enzyme, then what is released.":"Beside each arrow: the enzyme, then what is used (+) and released (arrow)."}</p></div>`}
+const eqHTML=a=>a&&a.length?`<div class="eqs"><p class="sm"><b>Reactions and formulas</b></p>${a.map(e=>`<div class="eq">${e.name?`<div class="sm"><b>${esc(e.name)}</b></div>`:""}<div class="eqf">${esc(e.eq)}</div>${e.note?`<div class="sm muted">${esc(e.note)}</div>`:""}</div>`).join("")}</div>`:"";
+const figHTML=f=>f&&f.url?`<figure class="fg"><img src="${esc(f.url)}" alt="${esc(f.caption||f.query||"")}" loading="lazy" referrerpolicy="no-referrer"><figcaption class="sm muted">${esc(f.caption||"")}${f.caption?". ":""}Picture: ${f.page?`<a href="${esc(f.page)}" target="_blank" rel="noopener">${esc(f.credit||"source")}</a>`:esc(f.credit||"")}. Found automatically, check it matches the topic.</figcaption></figure>`:"";
+const guideTxt=g=>[g.title,"",g.overview,"",...(g.objectives.length?["WHAT YOU SHOULD KNOW",...g.objectives.map(p=>"- "+p),""]:[]),...g.sections.flatMap((s,i)=>[`${i+1}. ${s.heading.toUpperCase()}`,...(s.intro?[s.intro]:[]),...s.points.map(p=>"- "+p),...(s.tables&&s.tables.length?s.tables:(s.table?[s.table]:[])).flatMap(t=>[...(t.title?[t.title]:[]),t.head.join(" | "),...t.rows.map(r=>r.join(" | "))]),...(s.equations&&s.equations.length?["REACTIONS AND FORMULAS",...s.equations.map(e=>`${e.name?e.name+": ":""}${e.eq}${e.note?" ("+e.note+")":""}`)]:[]),...(s.diagram?[`${s.diagram.title||"Pathway"}: `+s.diagram.nodes.map((n,k)=>n+(s.diagram.steps[k]&&s.diagram.steps[k].label?` [${s.diagram.steps[k].label}] ->`:" ->")).join(" ")]:[]),...(s.script?["What to say: "+s.script]:[]),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),...(s.clinical?["Clinical link: "+s.clinical]:[]),""]),...(g.glossary.length?["GLOSSARY",...g.glossary.map(x=>`- ${x.term}: ${x.def}`),""]:[]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
 const saveBlob=(b,name)=>{const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)};
 const fname=t=>(String(t||"").replace(/[^\w\- ]+/g,"").trim().slice(0,60)||"study");
 const jpost=(u,b)=>api(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
