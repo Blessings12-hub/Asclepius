@@ -15,6 +15,14 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 1.3:
+
+- **Presentations and PowerPoints are now separate from study guides.** The Presentation tab no longer builds a study guide. It researches the topic, writes a detailed presentation (rich sections with speaker notes, tables, glossary, questions) and offers it as its own PDF. The PowerPoint is then summarised from that presentation, with pictures. The Study guide tab is unchanged and keeps its own PDF
+- **Choose how many slides** (8, 10, 12, 15, 20, 25 or 30) before building. The number is the total: title slide with the topic name, outline and sources slides are included. Changing the number and building again reuses the presentation you already have
+- **All downloads kept:** everything as a zip (presentation PDF + PowerPoint), PowerPoint only, slides as PDF, presentation PDF, and the study guide PDF in the Study guide tab
+- **Full detail in every guide and presentation, doses included.** Drug topics are organised by type and subtype (for autonomic drugs: muscarinic M1 to M5, nicotinic NM and NN, cholinesterase inhibitors, alpha1, alpha2, beta1 to beta3 and so on). Every drug gets a row with its subtype and mechanism, uses, adverse effects, contraindications, interactions and usual dose and route. Doses come only from the sources or well-established practice; otherwise the cell says "see formulary". Check doses against the Zambian STG or your formulary before relying on them. All other courses are told to list every type, subtype, classification, stage and grade with the defining numbers
+- Tested locally (PowerPoint and PDF builds with 17 slides, drug tables with a dose column). Not tested against live websites or an AI key
+
 New in 1.2:
 
 - **Deeper research for every study guide.** Guides now name every important item instead of a few examples (every organism, enzyme, nerve, condition in the topic), with 7-10 sections, longer sections and tables that list all items
