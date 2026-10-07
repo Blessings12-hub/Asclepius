@@ -1,6 +1,6 @@
 {
   "name": "asclepius",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Private study workspace for medical school: years 1-6, 3D lessons, auto-translation, AI study guides and presentations, progress tracking, focus timer, backups and a drug/lab reference.",
   "type": "module",
   "private": true,

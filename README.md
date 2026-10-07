@@ -15,6 +15,14 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 1.2:
+
+- **Deeper research for every study guide.** Guides now name every important item instead of a few examples (every organism, enzyme, nerve, condition in the topic), with 7-10 sections, longer sections and tables that list all items
+- **Drug mode for Pharmacology, Clinical Pharmacology, Psychopharmacology, antimicrobials, toxicology and anaesthesia topics.** The research also reads Wikipedia drug-list and ATC pages, more StatPearls drug chapters and a drug-focused web search. The guide is planned one section per drug class, each with a table that has a row for every drug (mechanism, uses, adverse effects and cautions), then class-wide facts: contraindications, pregnancy, interactions, monitoring, drugs of choice, antidotes. Physiology is kept to a sentence. Practice questions ask which drug, which adverse effect, which contraindication. Doses are still left out (check your guideline)
+- **Study guide for every topic** (button on each course page, under Topics): researches and writes a full guide for each topic in the course outline, one after another, and joins them into one guide and one PDF. It takes 20 to 40 minutes for a big course and uses a lot of the free AI allowance; keep the page open. A topic that fails is listed in the overview so you can build it alone
+- Guide PDFs and limits raised so long guides are not cut off (up to 160 sections, 400 sources)
+- Not tested against the live websites from where this was written: if a site returns nothing, the guide still builds from the others, and the "Websites read" line shows which ones worked
+
 New in 1.1:
 
 - **Microscopy and Macroscopy are now separate** (two menu items). Microscopy is what you see down the microscope: histology, cytology, smears, histopathology, stained microbes and parasites, electron micrographs. Macroscopy is what you see by eye: gross specimens and cut organs, dissections, cultures on plates, and how disease looks on the patient. The AI problems differ too (a macroscopy slide is described like a gross specimen: size, shape, colour, cut surface)

@@ -11,7 +11,7 @@ import { seedCourses, seedRefs, courseId, STARTER_VERSION } from "./lib/seed.js"
 import { makeBackup, backupIfStale, listBackups, snapshot, restore } from "./lib/backup.js";
 import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
 import { research, referenceText, findPictures, fetchImage, pool } from "./lib/media.js";
-import { deepResearch, fitSources, sourceBlock } from "./lib/research.js";
+import { deepResearch, fitSources, sourceBlock, subjectKind } from "./lib/research.js";
 import { makeZip } from "./lib/zip.js";
 import { getVapid, sendPush } from "./lib/push.js";
 import { THEMES, tidy, normalizeDeck, chosen, buildPptx, buildSlidePdf, normalizeGuide, normalizeSection, normalizeExtras, buildGuidePdf } from "./lib/deck.js";
@@ -434,48 +434,58 @@ app.post("/api/ai", wrap(async (req, res) => {
 // ---- deep study guide, built in steps so each step stays inside the host's time limit ----
 // 1) /api/research: read many websites   2) /api/guide/outline: plan the sections
 // 3) /api/guide/section (once per section, the browser runs several at a time)   4) /api/guide/extras: glossary, questions
-const refBudget = () => Math.min(Math.floor(ctxChars * 0.6), 48000);
+const refBudget = (kind) => Math.min(Math.floor(ctxChars * (kind === "drugs" ? 0.7 : 0.6)), kind === "drugs" ? 70000 : 48000);
 const cleanSources = (r) => (Array.isArray(r?.sources) ? r.sources : []).slice(0, 30).map((x, i) => ({
   n: +x.n || i + 1, site: tidy(x.site, 60), title: tidy(x.title, 160), url: /^https?:\/\//.test(x.url) ? String(x.url).slice(0, 260) : "",
-  links: Array.isArray(x.links) ? x.links.slice(0, 8) : [], text: String(x.text || "").slice(0, 14000),
+  links: Array.isArray(x.links) ? x.links.slice(0, 8) : [], text: String(x.text || "").slice(0, 22000),
 })).filter((x) => x.text.length > 100);
 const studentMats = async (courseId, cap) => (await context(courseId)).slice(0, Math.min(cap, Math.floor(ctxChars * 0.2))); // small-context providers (Groq) get smaller slices
-const WRITER = "You are a senior medical educator writing a detailed study guide for a medical student. Plain text only: no markdown symbols, no asterisks, no emojis, no drug doses (say 'check your guideline'). Ground facts in the numbered SOURCES where you can, use your own knowledge to fill gaps, and add '(check textbook)' after anything you are not sure of. Where sources disagree, say so.";
+const WRITER = "You are a senior medical educator writing a detailed study guide for a medical student. Plain text only: no markdown symbols, no asterisks, no emojis, no drug doses (say 'check your guideline'). Ground facts in the numbered SOURCES where you can, use your own knowledge to fill gaps, and add '(check textbook)' after anything you are not sure of. Where sources disagree, say so. COMPLETENESS RULE: when a topic is a collection (medicines, microorganisms, enzymes, vitamins, nerves, muscles, arteries, syndromes, drugs of a class), name every item a medical syllabus would expect, never just a few examples, and never leave an item out to save space.";
+const subjOf = (course, topic) => subjectKind(course?.title, topic);
 app.post("/api/research", wrap(async (req, res) => {
   const course = (await getCourses()).find((c) => c.id === req.body.courseId);
   const topic = tidy(req.body.topic || course?.title, 100);
   if (!topic) throw bad("Type a topic first");
   const r = await deepResearch(topic, { courseTitle: course?.title || "", grounded: aiInfo().provider === "gemini" });
   if (!r.sources.length) throw new Error("Could not read any website for this topic right now. Check the topic spelling and try again.");
-  const fitted = fitSources(r.sources, refBudget());
-  res.json({ topic, report: r.report, sources: fitted });
+  const fitted = fitSources(r.sources, refBudget(r.kind));
+  res.json({ topic, kind: r.kind, report: r.report, sources: fitted });
 }));
 app.post("/api/guide/outline", wrap(async (req, res) => {
   const course = (await getCourses()).find((c) => c.id === req.body.courseId);
   const topic = tidy(req.body.topic || course?.title, 100), src = cleanSources(req.body.research);
-  const sys = `${WRITER} Plan the guide. Return ONLY JSON: {"title":"specific title","overview":"3-4 sentences: what this topic is, why it matters, how the guide is organised","objectives":["5-7 short statements of what the student should be able to explain or do afterwards"],"sections":[{"heading":"short heading","focus":"one sentence on exactly what this section covers"}]}
-Make 6-8 sections in a logical teaching order that fits the subject: for diseases use definition and epidemiology, aetiology and pathogenesis, clinical features, investigations, management, complications and prognosis; for chemistry use structure, nomenclature, properties, reactions and mechanisms, biological and clinical relevance; for anatomy use gross anatomy, relations, blood supply, innervation, clinical anatomy; for biochemistry use pathway or molecule, enzymes, regulation, disorders. Sections must not overlap.`;
-  const raw = await claude(sys, `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 3000)}\n\nSOURCES (titles):\n${src.map((s) => `[${s.n}] ${s.site}: ${s.title}`).join("\n")}`, 1800, { json: true });
+  const kind = subjOf(course, topic);
+  const generalSys = `${WRITER} Plan the guide. Return ONLY JSON: {"title":"specific title","overview":"3-4 sentences: what this topic is, why it matters, how the guide is organised","objectives":["5-7 short statements of what the student should be able to explain or do afterwards"],"sections":[{"heading":"short heading","focus":"one sentence on exactly what this section covers"}]}
+Make 7-10 sections in a logical teaching order that fits the subject: for diseases use definition and epidemiology, aetiology and pathogenesis, clinical features, investigations, management, complications and prognosis; for chemistry use structure, nomenclature, properties, reactions and mechanisms, biological and clinical relevance; for anatomy use gross anatomy, relations, blood supply, innervation, clinical anatomy; for biochemistry use pathway or molecule, enzymes, regulation, disorders; for microbiology split the topic so that EVERY important organism appears in some section's focus. If the topic is a collection of items, put the names of the items in each section's focus so none is missed. Sections must not overlap.`;
+  const drugSys = `${WRITER} Plan a DRUG-CENTRED pharmacology guide. The student needs every medicine, not physiology. Return ONLY JSON: {"title":"specific title","overview":"3-4 sentences: which drugs and classes this guide covers and how it is organised","objectives":["5-7 statements such as 'Name every drug in each class and its main use, adverse effects and contraindications'"],"sections":[{"heading":"drug class or group","focus":"Drugs: the generic name of EVERY drug in this class or group, separated by commas (include older and newer agents and the ones used in Africa and on the WHO Essential Medicines List). Then one clause on what else the section covers."}]}
+Make 8-14 sections, one per drug class or subclass (for a broad topic such as antimicrobials or cardiovascular drugs, one per class: penicillins, cephalosporins, macrolides and so on). Use the SOURCES lists and your own knowledge so that no drug a medical student could be examined on is missing. Put a short first section on the general principles of the topic ONLY if the topic needs it (pharmacokinetics, pharmacodynamics, interactions, adverse reaction types) and keep it to one section. Sections must not overlap and each drug appears in exactly one section.`;
+  const sys = kind === "drugs" ? drugSys : generalSys;
+  const raw = await claude(sys, `Topic: ${topic}\nCourse: ${course?.title || ""}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 3000)}\n\n${kind === "drugs" ? "SOURCES (read them for drug names):\n" + sourceBlock(fitSources(src, Math.min(30000, Math.floor(ctxChars * 0.4)))) : "SOURCES (titles):\n" + src.map((s) => `[${s.n}] ${s.site}: ${s.title}`).join("\n")}`, kind === "drugs" ? 3600 : 2200, { json: true });
   const o = parseJSON(raw);
-  const sections = (Array.isArray(o.sections) ? o.sections : []).slice(0, 8).map((s) => ({ heading: tidy(s?.heading, 90), focus: tidy(s?.focus, 220) })).filter((s) => s.heading);
+  const sections = (Array.isArray(o.sections) ? o.sections : []).slice(0, kind === "drugs" ? 16 : 12).map((s) => ({ heading: tidy(s?.heading, 90), focus: tidy(s?.focus, kind === "drugs" ? 700 : 260) })).filter((s) => s.heading);
   if (sections.length < 3) throw new Error("The AI did not plan the guide properly. Please try again.");
-  res.json({ title: tidy(o.title, 100) || topic, overview: tidy(o.overview, 900), objectives: tidyList(o.objectives, 8, 200), sections });
+  res.json({ title: tidy(o.title, 100) || topic, overview: tidy(o.overview, 900), objectives: tidyList(o.objectives, 8, 200), sections, kind });
 }));
 app.post("/api/guide/section", wrap(async (req, res) => {
   const course = (await getCourses()).find((c) => c.id === req.body.courseId);
   const topic = tidy(req.body.topic || course?.title, 100), src = cleanSources(req.body.research), o = req.body.outline || {};
   const i = +req.body.index, sec = Array.isArray(o.sections) ? o.sections[i] : null;
   if (!sec) throw bad("Unknown section");
-  const sys = `${WRITER} Write ONE section of the guide. Return ONLY JSON: {"intro":"3-4 sentence paragraph that explains the idea in plain words","points":["Term: explanation in 1-2 full sentences", ...7-10 items, specific and factual],"table":null or {"title":"short","head":["col1","col2",...2-4 columns],"rows":[["..",".."],...3-8 rows]},"mnemonic":"memory aid or empty string","clinical":"1-3 sentences: a clinical or practical example that makes it stick","refs":[numbers of the sources you used]}
-Include a table only when the content really is a comparison or classification. Be detailed enough to study from. Do not repeat other sections.`;
+  const kind = subjOf(course, topic);
+  const generalSys = `${WRITER} Write ONE section of the guide. Return ONLY JSON: {"intro":"3-4 sentence paragraph that explains the idea in plain words","points":["Term: explanation in 1-2 full sentences", ...8-12 items, specific and factual],"table":null or {"title":"short","head":["col1","col2",...2-4 columns],"rows":[["..",".."],...3-12 rows]},"mnemonic":"memory aid or empty string","clinical":"1-3 sentences: a clinical or practical example that makes it stick","refs":[numbers of the sources you used]}
+Include a table when the content is a comparison, a classification or a list of items (organisms, enzymes, nerves, conditions): then list EVERY item the focus names. Be detailed enough to study from. Do not repeat other sections.`;
+  const drugSys = `${WRITER} Write ONE drug-class section of a pharmacology guide. The student wants the medicines, so keep physiology and pathophysiology to one sentence at most. Return ONLY JSON: {"intro":"1-2 sentences: what the class is for and its shared mechanism","table":{"title":"Drugs in this group","head":["Drug","Mechanism and class notes","Main uses","Adverse effects and cautions"],"rows":[["generic name","one line","uses","main adverse effects, contraindications, key interactions"], ...ONE ROW FOR EVERY DRUG named in the focus, up to 30 rows]},"points":["Term: explanation in 1-2 full sentences", ...8-12 items covering: shared mechanism, what the whole class has in common (adverse effects, contraindications, pregnancy and breastfeeding, interactions), monitoring, drugs of choice, antidotes or reversal agents, special features of individual drugs (prodrugs, enzyme inducers or inhibitors, black-box warnings), and resistance where it applies],"mnemonic":"memory aid or empty string","clinical":"1-3 sentences: a prescribing example","refs":[numbers of the sources you used]}
+Do NOT leave out any drug in the focus, and add an important drug of this class that the focus missed. Do not give doses; say 'check your guideline'. Table cells must be short (under 150 characters).`;
+  const sys = kind === "drugs" ? drugSys : generalSys;
   const others = o.sections.map((s, k) => `${k + 1}. ${s.heading}`).join("; ");
-  const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nAll sections: ${others}\nWRITE SECTION ${i + 1}: ${sec.heading}\nFocus: ${sec.focus}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 5000)}\n\nSOURCES:\n${sourceBlock(src)}`, 2200, { json: true });
+  const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nAll sections: ${others}\nWRITE SECTION ${i + 1}: ${sec.heading}\nFocus: ${sec.focus}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 5000)}\n\nSOURCES:\n${sourceBlock(src)}`, kind === "drugs" ? 5500 : 3000, { json: true });
   res.json({ section: normalizeSection(parseJSON(raw), sec.heading) });
 }));
 app.post("/api/guide/extras", wrap(async (req, res) => {
   const course = (await getCourses()).find((c) => c.id === req.body.courseId);
   const topic = tidy(req.body.topic || course?.title, 100), o = req.body.outline || {};
-  const sys = `${WRITER} Return ONLY JSON: {"glossary":[{"term":"..","def":"one clear sentence"}, ...10-14 key terms],"high_yield":["8-10 exam-ready facts, each one sentence"],"pitfalls":["5-7 common mistakes or confusions, each saying what is wrong and what is right"],"questions":[{"q":"..","a":"short complete answer"}, ...12-15 items mixing recall, mechanism and clinical application]}`;
+  const kind = subjOf(course, topic);
+  const sys = `${WRITER} Return ONLY JSON: {"glossary":[{"term":"..","def":"one clear sentence"}, ...10-14 key terms],"high_yield":["8-10 exam-ready facts, each one sentence"],"pitfalls":["5-7 common mistakes or confusions, each saying what is wrong and what is right"],"questions":[{"q":"..","a":"short complete answer"}, ...12-15 items mixing recall, mechanism and clinical application]}${kind === "drugs" ? "\nThis is a drug guide: make the questions about the medicines themselves (which drug for which condition, adverse effect to drug, contraindication, interaction, antidote, drug of choice, which drug does not belong in the class). High-yield facts are drug-of-choice, classic adverse effects, interactions and contraindications. Glossary terms are drug classes, drug names and pharmacology terms." : ""}`;
   const digest = (Array.isArray(req.body.digest) ? req.body.digest : []).map((x) => tidy(x, 700)).join("\n").slice(0, Math.min(9000, Math.floor(ctxChars * 0.3)));
   const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nSections: ${(o.sections || []).map((s) => s.heading).join("; ")}\n\nCONTENT OF THE GUIDE (for consistency):\n${digest}\n\nSOURCES:\n${sourceBlock(fitSources(cleanSources(req.body.research), Math.min(14000, Math.floor(ctxChars * 0.3))))}`, 3200, { json: true });
   res.json({ extras: normalizeExtras(parseJSON(raw)) });
