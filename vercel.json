@@ -1,6 +1,6 @@
 {
   "functions": {
-    "server.js": { "includeFiles": "public/**", "maxDuration": 60 }
+    "server.js": { "includeFiles": "{public/**,lib/fonts/**}", "maxDuration": 60 }
   },
   "crons": [
     { "path": "/api/cron/backup", "schedule": "0 2 * * *" }

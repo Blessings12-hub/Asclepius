@@ -11,7 +11,7 @@ import { seedCourses, seedRefs, courseId, STARTER_VERSION } from "./lib/seed.js"
 import { makeBackup, backupIfStale, listBackups, snapshot, restore } from "./lib/backup.js";
 import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
 import { research, referenceText, findPictures, fetchImage, pool } from "./lib/media.js";
-import { deepResearch, fitSources, sourceBlock, subjectKind, disciplineOf } from "./lib/research.js";
+import { deepResearch, fitSources, sourceBlock, subjectKind, disciplineOf, VIS_COMMON } from "./lib/research.js";
 import { makeZip } from "./lib/zip.js";
 import { getVapid, sendPush } from "./lib/push.js";
 import { THEMES, tidy, normalizeDeck, chosen, buildPptx, buildSlidePdf, normalizeGuide, normalizeSection, normalizeExtras, buildGuidePdf } from "./lib/deck.js";
@@ -443,8 +443,8 @@ const studentMats = async (courseId, cap) => (await context(courseId)).slice(0, 
 const WRITER = "You are a senior medical educator writing a detailed study guide for a medical student. Plain text only: no markdown symbols, no asterisks, no emojis, Give drug doses (usual adult dose, route and frequency, plus paediatric, renal or elderly adjustment when it is standard) only when a numbered SOURCE states them or they are well established, and never invent one: write 'see formulary' when unsure. FULL-DETAIL RULE: the student wants everything a full course expects, so give every type, subtype, classification, stage and grade, and the defining numbers (normal values, cut-offs, criteria, doses) when sources state them. Ground facts in the numbered SOURCES where you can, use your own knowledge to fill gaps, and add '(check textbook)' after anything you are not sure of. Where sources disagree, say so. COURSE RULE: write like a good university textbook for this exact course, so that a student who learns only this guide knows the whole topic. Keep background physiology and anatomy to what is needed to understand the point. COMPLETENESS RULE: when a topic is a collection (medicines, microorganisms, enzymes, vitamins, nerves, muscles, arteries, syndromes, drugs of a class), name every item a medical syllabus would expect, never just a few examples, and never leave an item out to save space.";
 const subjOf = (course, topic) => subjectKind(course?.title, topic);
 const CLASSIF = "Classification at a glance";
-const PHARMGEN_NOTE = "GENERAL PHARMACOLOGY CHECKLIST: every definition; every route of administration (advantages, disadvantages, example drugs); every pharmacokinetic parameter with its formula and a worked example (bioavailability, volume of distribution, clearance, half-life, steady state, loading and maintenance dose); every pharmacodynamic idea (types of agonist and antagonist, receptor families and second messengers, dose-response curve, potency, efficacy, therapeutic index, tolerance, tachyphylaxis); lists of CYP450 inducers, inhibitors and substrates; the types of adverse drug reaction (A to F) with examples; types of drug interaction with example drug pairs; pharmacogenetic examples; dose changes in pregnancy, children, the elderly, renal and hepatic disease with example drugs. Use tables for lists of examples.";
-const guideNote = (kind, course, topic) => (kind === "pharmgen" ? PHARMGEN_NOTE : kind === "drugs" ? "" : disciplineOf(course?.title, topic).note);
+const PHARMGEN_NOTE = "GENERAL PHARMACOLOGY CHECKLIST: every definition; every route of administration (advantages, disadvantages, example drugs); every pharmacokinetic parameter with its formula and a worked example (bioavailability, volume of distribution, clearance, half-life, steady state, loading and maintenance dose); every pharmacodynamic idea (types of agonist and antagonist, receptor families and second messengers, dose-response curve, potency, efficacy, therapeutic index, tolerance, tachyphylaxis); lists of CYP450 inducers, inhibitors and substrates; the types of adverse drug reaction (A to F) with examples; types of drug interaction with example drug pairs; pharmacogenetic examples; dose changes in pregnancy, children, the elderly, renal and hepatic disease with example drugs. Use tables for lists of examples. Write every formula in equations (t½ = 0.693 × Vd / CL, F = AUC(oral) / AUC(IV), loading dose = Cp × Vd / F, Css, Henderson–Hasselbalch for ionisation, therapeutic index) with a worked example in the note.";
+const guideNote = (kind, course, topic) => (kind === "pharmgen" ? PHARMGEN_NOTE + " " + VIS_COMMON : kind === "drugs" ? "" : (disciplineOf(course?.title, topic).note + " " + VIS_COMMON).trim());
 app.post("/api/research", wrap(async (req, res) => {
   const course = (await getCourses()).find((c) => c.id === req.body.courseId);
   const topic = tidy(req.body.topic || course?.title, 100);
@@ -481,7 +481,7 @@ app.post("/api/guide/section", wrap(async (req, res) => {
   if (!sec) throw bad("Unknown section");
   const kind = subjOf(course, topic);
   const note = guideNote(kind, course, topic);
-  const generalSys = `${WRITER} Write ONE section of the guide. Return ONLY JSON: {"intro":"3-4 sentence paragraph that explains the idea in plain words","points":["Term: explanation in 1-2 full sentences", ...10-14 items, specific and factual, with the defining numbers],"tables":[{"title":"short","head":["col1","col2",...2-4 columns],"rows":[["..",".."],...3-25 rows]}] (one or two tables, or an empty list),"mnemonic":"memory aid or empty string","clinical":"1-3 sentences: a clinical or practical example that makes it stick","refs":[numbers of the sources you used]}
+  const generalSys = `${WRITER} Write ONE section of the guide. Return ONLY JSON: {"intro":"3-4 sentence paragraph that explains the idea in plain words","points":["Term: explanation in 1-2 full sentences", ...10-14 items, specific and factual, with the defining numbers],"tables":[{"title":"short","head":["col1","col2",...2-4 columns],"rows":[["..",".."],...3-25 rows]}] (one or two tables, or an empty list),"equations":[{"name":"short name","eq":"the reaction or formula with real symbols","note":"enzyme, cofactors, regulation, symbols explained, worked example"}] (or an empty list),"diagram":null or {"title":"..","type":"chain or cycle","nodes":[..],"steps":[{"label":"..","in":"..","out":".."}]},"figure":null or {"query":"..","caption":".."},"mnemonic":"memory aid or empty string","clinical":"1-3 sentences: a clinical or practical example that makes it stick","refs":[numbers of the sources you used]}
 Include a table when the content is a comparison, a classification, a criterion or score, a list of items (organisms, enzymes, nerves, muscles, conditions) or a drug treatment list (drug, dose and route, duration): then list EVERY item the focus names. Be detailed enough to study from, like a full course. Do not repeat other sections. ${note}`;
   const OVERVIEW = kind === "drugs" && /^classification at a glance/i.test(sec.heading);
   const drugSys = OVERVIEW
@@ -494,8 +494,16 @@ Do NOT leave out any drug in the focus, and add an important drug of this class 
   const sys = (kind === "drugs" ? drugSys : generalSys) + (talk ? TALK_SEC : "");
   const others = o.sections.map((s, k) => `${k + 1}. ${s.heading}`).join("; ");
   const planned = OVERVIEW ? o.sections.slice(1).map((s) => `${s.heading} (${s.focus})`).join("\n").slice(0, 7000) : "";
-  const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nAll sections: ${others}${planned ? "\nPLANNED CLASS SECTIONS WITH THEIR DRUGS:\n" + planned : ""}\nWRITE SECTION ${i + 1}: ${sec.heading}\nFocus: ${sec.focus}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 5000)}\n\nSOURCES:\n${sourceBlock(src)}`, kind === "drugs" ? (OVERVIEW ? 6500 : 8000) : talk ? 5200 : 4600, { json: true });
-  res.json({ section: normalizeSection(parseJSON(raw), sec.heading) });
+  const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nAll sections: ${others}${planned ? "\nPLANNED CLASS SECTIONS WITH THEIR DRUGS:\n" + planned : ""}\nWRITE SECTION ${i + 1}: ${sec.heading}\nFocus: ${sec.focus}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 5000)}\n\nSOURCES:\n${sourceBlock(src)}`, kind === "drugs" ? (OVERVIEW ? 6500 : 8000) : talk ? 6200 : 5600, { json: true });
+  const section = normalizeSection(parseJSON(raw), sec.heading);
+  // find a real picture for the figure the AI asked for; no picture found means no figure
+  if (section.figure?.query) {
+    try {
+      const c = await Promise.race([findPictures([section.figure.query, `${topic} ${section.figure.query}`], 1), sleep(9000).then(() => [])]);
+      section.figure = c[0] ? { ...section.figure, url: c[0].url, credit: c[0].credit, page: c[0].page || "" } : null;
+    } catch { section.figure = null; }
+  }
+  res.json({ section });
 }));
 app.post("/api/guide/extras", wrap(async (req, res) => {
   const course = (await getCourses()).find((c) => c.id === req.body.courseId);
