@@ -1,6 +1,6 @@
 // Asclepius service worker: lets the app open and show what you used before, even with no signal.
-const SHELL = "asclepius-shell-v11", DATA = "asclepius-data-v11";
-const PRECACHE = ["/", "/slidebank.js", "/manifest.json", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/404.html"];
+const SHELL = "asclepius-shell-v12", DATA = "asclepius-data-v12";
+const PRECACHE = ["/", "/slidebank.js", "/codeblue.js", "/manifest.json", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/404.html"];
 const NEVER = /^\/api\/(backup|anki|health|cron|login|logout)/; // never stored: exports, backups, status, sign-in
 const BIG = 15 * 1024 * 1024; // do not keep uploaded files larger than this
 
@@ -59,4 +59,26 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   e.respondWith(staleWhileRevalidate(r, SHELL));
+});
+
+// ---- notifications while the app is closed (sent by the server through Web Push) ----
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { title: "Asclepius", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const open = wins.find((c) => c.visibilityState === "visible");
+    // the app is on screen: show a small in-app message instead of a system notification
+    if (open) { open.postMessage({ type: "push", title: d.title, body: d.body }); return; }
+    await self.registration.showNotification(d.title || "Asclepius", { body: d.body || "", icon: "/icon-192.png", badge: "/favicon-48.png", tag: d.tag || undefined, renotify: !!d.tag, data: { url: d.url || "/" } });
+  })());
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of wins) { if ("focus" in c) { c.postMessage({ type: "go", url }); return c.focus(); } }
+    return self.clients.openWindow(url);
+  })());
 });

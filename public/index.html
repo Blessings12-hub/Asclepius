@@ -128,6 +128,7 @@ header{padding-top:calc(12px + env(safe-area-inset-top));padding-left:max(18px,e
 <header><h1><img class="logo" src="/icon.svg" alt="">Asclepius</h1><div class="hr"><span class="muted" id="crumb" style="color:var(--headmuted)"></span><button id="chip" hidden title="Open the focus timer"></button><button id="theme" title="Change light / dark mode"></button></div></header>
 <main><nav id="nav"></nav><section id="main"><p class="muted">Loading…</p></section></main></div>
 <script src="/slidebank.js"></script>
+<script src="/codeblue.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -258,7 +259,7 @@ async function init(){
  $("#login").hidden=true;$("#app").hidden=false;
  try{settings=await api("/api/settings")}catch{}
  if(T.dur==null||idle())resetPhase(T.phase==="focus"?"focus":T.phase);
- flushPending();post("/api/backup/auto").catch(()=>{});tick();go("today");refreshDue()}
+ flushPending();post("/api/backup/auto").catch(()=>{});tick();{const g=(location.search.match(/[?&]go=(\w+)/)||[])[1];go(g&&VIEWS[g]?g:"today")}refreshDue();pushResync()}
 function drawNav(){const items=Object.entries(TITLES);
  $("#nav").innerHTML=`<div class="prim">${items.map(([k,t])=>`<button class="c ${!cur&&view===k?"on":""}" data-v="${k}"><b>${t}${k==="today"&&dueN?` <span class="badge">${dueN}</span>`:""}</b></button>`).join("")}</div>
  <details ${wide()||cur?"open":""}><summary>Courses by year</summary>`+yrs().map(y=>`<details ${cur&&cur.year===y?"open":""}><summary>Year ${y}</summary>${
@@ -491,9 +492,9 @@ async function viewSearch(){
 let pTab="mock",pm=null,sim=null;
 const courseOpts=()=>yrs().map(y=>`<optgroup label="Year ${y}">${courses.filter(c=>c.year===y).map(c=>`<option value="${c.id}">${esc(c.title)}</option>`).join("")}</optgroup>`).join("");
 async function viewPractice(){courses=await api("/api/courses");
- $("#main").innerHTML=`<h2>Practice</h2><div class="tabs">${[["mock","Mock exam"],["osce","OSCE station"],["sim","Patient simulator"],["bank","Question bank"],["papers","Past papers"],["ddx","Differential"],["present","Case presenter"],["log","Logbook"],["lecture","Lecture recorder"],["map","Concept map"],["cards","Cloze cards"],["calc","Calculators"]].map(([k,t])=>`<button data-t="${k}" class="${pTab===k?"on":""}">${t}</button>`).join("")}</div><div id="pbody"></div>`;
+ $("#main").innerHTML=`<h2>Practice</h2><div class="tabs">${[["mock","Mock exam"],["osce","OSCE station"],["sim","Patient simulator"],["bank","Question bank"],["papers","Past papers"],["ddx","Differential"],["present","Case presenter"],["log","Logbook"],["lecture","Lecture recorder"],["map","Concept map"],["cards","Cloze cards"],["calc","Calculators"],["code","Code blue"]].map(([k,t])=>`<button data-t="${k}" class="${pTab===k?"on":""}">${t}</button>`).join("")}</div><div id="pbody"></div>`;
  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{pTab=b.dataset.t;viewPractice()});
- ({mock:pMock,osce:pOsce,sim:pSim,bank:pBank,papers:pPapers,ddx:pDdx,present:pPresent,log:pLog,lecture:pLecture,map:pMap,cards:pCards,calc:pCalc})[pTab]()}
+ ({mock:pMock,osce:pOsce,sim:pSim,bank:pBank,papers:pPapers,ddx:pDdx,present:pPresent,log:pLog,lecture:pLecture,map:pMap,cards:pCards,calc:pCalc,code:pCode})[pTab]()}
 function pickRow(extra){return `<div class="row"><select id="pc">${courseOpts()}</select><input id="pp" placeholder="Topic (optional)">${extra||""}</div>`}
 function pMock(){$("#pbody").innerHTML=`<div class="card"><p class="muted sm">10 clinical-vignette questions, 90 seconds each. Wrong topics feed your weak-topic list.</p>${pickRow('<button class="p" id="pgo">Start</button>')}<div id="pq"></div></div>`;
  $("#pgo").onclick=async()=>{const o=$("#pq");o.innerHTML="<p class='muted'>Writing questions…</p>";
@@ -1085,6 +1086,36 @@ async function viewBackup(){await viewBackup0();
  $("#main").insertAdjacentHTML("beforeend",'<div class="card"><h3>Security</h3><p class="sm muted">Sign out on this device. Use this on a shared phone or computer. It also clears the copy kept for offline use.</p><button id="so">Sign out</button></div>');
  $("#so").onclick=async()=>{try{await post("/api/logout")}catch{}try{const ks=await caches.keys();await Promise.all(ks.filter(k=>/data/.test(k)).map(k=>caches.delete(k)))}catch{}
   try{localStorage.removeItem(RQ)}catch{}dueN=0;paintDue();$("#pw").value="";showLogin()}}
+
+/* ---- Notifications when the app is closed (Web Push) ---- */
+const pushOk=()=>"serviceWorker"in navigator&&"PushManager"in window&&"Notification"in window;
+const keyBytes=b=>{const p="=".repeat((4-b.length%4)%4),r=atob((b+p).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from(r,c=>c.charCodeAt(0))};
+const tzMin=()=>-new Date().getTimezoneOffset();
+async function pushSub(){if(!pushOk())return null;try{const reg=await navigator.serviceWorker.ready;return await reg.pushManager.getSubscription()}catch{return null}}
+async function pushEnable(){if(!pushOk())throw new Error("This browser cannot receive notifications while closed. On an iPhone, add Asclepius to the Home Screen first (Share, Add to Home Screen), then open it from there.");
+ const perm=await Notification.requestPermission();if(perm!=="granted")throw new Error("Notifications were blocked. Allow them for this site in the browser settings, then try again.");
+ const reg=await navigator.serviceWorker.ready,{key}=await api("/api/push/key");let sub=await reg.pushManager.getSubscription();
+ if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:keyBytes(key)});
+ await post("/api/push/subscribe",{sub:sub.toJSON(),tz:tzMin()});return sub}
+async function pushDisable(){const sub=await pushSub();if(sub){const ep=sub.endpoint;await sub.unsubscribe().catch(()=>{});await post("/api/push/unsubscribe",{endpoint:ep}).catch(()=>{})}}
+async function pushResync(){try{if(!pushOk()||Notification.permission!=="granted")return;const sub=await pushSub();if(sub)await post("/api/push/subscribe",{sub:sub.toJSON(),tz:tzMin()})}catch{}}
+async function pushCard(){const m=$("#main");if(!m||view!=="settings")return;let st={devices:0,notify:{}},sub=await pushSub();try{st=await api("/api/push/status")}catch{}
+ const n={cards:true,blocks:true,exams:true,streak:true,...(st.notify||{})},on=!!sub&&Notification.permission==="granted";
+ const ago=st.lastCheck?Math.round((Date.now()-st.lastCheck)/60000):null;
+ const html=`<div class="card" id="pushcard"><h3>Notifications when the app is closed</h3>
+ <p class="muted sm">Sends a notification to this phone for your timetable blocks, the daily flashcard reminder, exam countdowns (14, 7, 3, 1 days and on the day) and a nudge at 19:00 if your streak is at risk. Status: <b>${on?"on for this device":"off"}</b>${st.devices?` · ${st.devices} device${st.devices===1?"":"s"} registered`:""}.</p>
+ <div class="row"><button class="p" id="pne">${on?"Re-register this device":"Turn on notifications"}</button>${on?'<button id="pnt">Send a test now</button><button class="d" id="pnd">Turn off</button>':""}</div>
+ <div id="pnp" ${on?"":"hidden"}><label class="sm"><input type="checkbox" data-pn="blocks" ${n.blocks?"checked":""}> Timetable blocks, when they start</label><br><label class="sm"><input type="checkbox" data-pn="cards" ${n.cards?"checked":""}> Daily flashcard reminder (the time is set on Today, Daily review reminder)</label><br><label class="sm"><input type="checkbox" data-pn="exams" ${n.exams?"checked":""}> Exam countdowns</label><br><label class="sm"><input type="checkbox" data-pn="streak" ${n.streak?"checked":""}> Streak at risk</label></div>
+ <p class="sm" id="pnm"></p>
+ <details><summary class="sm"><b>One-time setup for on-time delivery</b></summary><p class="sm">A closed app cannot wake itself, so the server has to send each notification at the right minute. Create a free job at cron-job.org (or any scheduler) that opens this address every minute: <code>${esc(location.origin)}/api/cron/notify?key=YOUR_CRON_SECRET</code>, where YOUR_CRON_SECRET is the CRON_SECRET value in your Vercel environment variables. ${st.cronSecretSet?"CRON_SECRET is set on your server.":"<b>CRON_SECRET is not set yet</b>: add it in your Vercel environment variables and redeploy."} ${ago===null?"The server has not been called by a scheduler yet.":`The server last checked ${ago<1?"less than a minute":ago+" minute"+(ago===1?"":"s")} ago.`} Without a scheduler, only the Send a test now button works.</p></details></div>`;
+ document.getElementById("pushcard")?.remove();m.querySelector("h2").insertAdjacentHTML("afterend",html);
+ const say=t=>$("#pnm").textContent=t;
+ $("#pne").onclick=async()=>{say("Turning on…");try{await pushEnable();say("On. Tap Send a test now to check.");pushCard()}catch(e){say(e.message)}};
+ const t=$("#pnt");if(t)t.onclick=async()=>{say("Sending…");try{const r=await post("/api/push/test",{});say(r.results.every(x=>x.ok)?"Sent. If the app is closed you should see it on your lock screen in a moment.":"Sent, but a device did not accept it (status "+(r.results.find(x=>!x.ok)||{}).status+"). Try Re-register this device.")}catch(e){say(e.message)}};
+ const d=$("#pnd");if(d)d.onclick=async()=>{await pushDisable();say("Turned off.");pushCard()};
+ document.querySelectorAll("[data-pn]").forEach(c=>c.onchange=async()=>{try{await send("PUT","/api/settings",{notify:{[c.dataset.pn]:c.checked}})}catch(e){say(e.message)}})}
+{const _vs=viewSettings;viewSettings=async function(){await _vs();pushCard()}}
+if("serviceWorker"in navigator)navigator.serviceWorker.addEventListener("message",e=>{const d=e.data||{};if(d.type==="push")toast((d.title?d.title+": ":"")+(d.body||""));if(d.type==="go"){const g=(String(d.url).match(/[?&]go=(\w+)/)||[])[1];if(g&&VIEWS[g]&&!$("#app").hidden)go(g)}});
 if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js");
 init();
 </script></body></html>
