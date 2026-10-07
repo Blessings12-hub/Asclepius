@@ -1,5 +1,5 @@
 // Asclepius service worker: lets the app open and show what you used before, even with no signal.
-const SHELL = "asclepius-shell-v12", DATA = "asclepius-data-v12";
+const SHELL = "asclepius-shell-v13", DATA = "asclepius-data-v13";
 const PRECACHE = ["/", "/slidebank.js", "/codeblue.js", "/manifest.json", "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/404.html"];
 const NEVER = /^\/api\/(backup|anki|health|cron|login|logout)/; // never stored: exports, backups, status, sign-in
 const BIG = 15 * 1024 * 1024; // do not keep uploaded files larger than this

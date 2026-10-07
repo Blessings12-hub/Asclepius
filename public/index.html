@@ -345,13 +345,13 @@ async function runPool(n,items,fn){let i=0;await Promise.all(Array.from({length:
 const twice=async f=>{try{return await f()}catch(e){if(e.message==="login")throw e;await sleep(4500);return await f()}};
 // Deep study guide, built in steps (each step is its own request, so nothing hits the host's time limit)
 async function buildGuide(id,topic,say){
- say("Step 1 of 4: reading many websites (StatPearls, Wikipedia, MedlinePlus, Wikibooks, PubMed, web search). About 20 seconds…");
+ say("Step 1 of 4: reading many websites (StatPearls, Wikipedia, drug lists, MedlinePlus, Wikibooks, web search). About 30 seconds…");
  const rs=await jpost("/api/research",{courseId:id,topic});
  const okSites=rs.report.filter(r=>r.ok).length;
- say(`Step 2 of 4: read ${rs.sources.length} pages from ${okSites} websites. Planning the guide…`);
+ say(`Step 2 of 4: read ${rs.sources.length} pages from ${okSites} websites. ${rs.kind==="drugs"?"Listing every drug and class…":"Planning the guide…"}`);
  const ol=await jpost("/api/guide/outline",{courseId:id,topic,research:rs});
  const total=ol.sections.length,secs=new Array(total);let done=0,failed=0;
- await runPool(3,ol.sections,async(_,k)=>{
+ await runPool(rs.kind==="drugs"?2:3,ol.sections,async(_,k)=>{
   try{secs[k]=(await twice(()=>jpost("/api/guide/section",{courseId:id,topic,research:rs,outline:ol,index:k}))).section}catch(e){if(e.message==="login")throw e;failed++}
   done++;say(`Step 3 of 4: writing section ${done} of ${total}…`)});
  const got=secs.filter(Boolean);
@@ -362,6 +362,24 @@ async function buildGuide(id,topic,say){
  const g={title:ol.title,overview:ol.overview,objectives:ol.objectives,sections:got,...ex,sources:rs.sources.map(({text,...r})=>r),report:rs.report};
  if(failed)g.overview+=` (${failed} section${failed>1?"s":""} could not be written this time. Build the guide again to fill ${failed>1?"them":"it"} in.)`;
  return g}
+// Guide for EVERY topic of a course: one full guide per topic, one after another, merged into one document
+async function buildCourseGuide(id,course,say){
+ const tops=(course.topics||[]).filter(Boolean);if(!tops.length)throw new Error("This course has no topics yet. Add them under Course outline.");
+ const parts=[],failed=[];
+ for(let i=0;i<tops.length;i++){
+  const pre=`Topic ${i+1} of ${tops.length} (${tops[i]}). `;
+  try{parts.push({t:tops[i],g:await buildGuide(id,tops[i],m=>say(pre+m))})}
+  catch(e){if(e.message==="login")throw e;failed.push(tops[i]);say(`${pre}Skipped, will list it at the end. Waiting a moment…`);await sleep(8000)}
+ }
+ if(!parts.length)throw new Error("No topic could be written. The free AI limit may be reached. Wait a few minutes and try again.");
+ const m={title:course.title+": all topics",overview:`One guide covering ${parts.length} of ${tops.length} topics in the ${course.title} outline, in order.`+(failed.length?` Not written this time (build these on their own): ${failed.join("; ")}.`:""),objectives:parts.map(p=>p.t),sections:[],glossary:[],high_yield:[],pitfalls:[],questions:[],sources:[],report:[]};
+ for(const {t,g} of parts){
+  const off=m.sources.length;
+  m.sources.push(...g.sources.map(x=>({...x,n:(x.n||0)+off})));
+  m.sections.push(...g.sections.map(s=>({...s,heading:`${t}: ${s.heading}`.slice(0,90),refs:(s.refs||[]).map(n=>n+off)})));
+  m.glossary.push(...g.glossary);m.high_yield.push(...g.high_yield);m.pitfalls.push(...g.pitfalls);m.questions.push(...g.questions);
+ }
+ return m}
 let guideCur=null;
 function showGuide(id,g,topic,compact){const o=$("#out");guideCur={id,g,topic};const text=guideTxt(g);
  const bar=`<div class="row acts"><button class="p" id="gp">Download guide PDF</button>${compact?"":`<button id="gm">Make presentation from this guide</button>`}<button id="gs">Save to my notes</button><button id="gf">Make flashcards</button><button id="gl">Listen</button><button id="gc">Copy text</button><span class="sm muted" id="am"></span></div>`;
@@ -419,7 +437,7 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  const mats=await api("/api/materials?courseId="+id);const fl=flash;flash="";
  $("#main").innerHTML=`<h2>${esc(cur.title)}</h2>${fl?`<p class="err">${esc(fl)}</p>`:""}
  <div class="row"><button id="foc">Start a focus session for this course</button></div>
- ${(cur.topics||[]).length?`<div class="card"><h3>Topics</h3><p class="sm muted">Tap a topic to study it with the AI helper below.</p><div class="row" style="flex-wrap:wrap">${cur.topics.map((t,i)=>`<button class="tp" data-i="${i}">${esc(t)}</button>`).join("")}</div></div>`:`<p class="sm muted">No topics yet. Add them under Course outline.</p>`}
+ ${(cur.topics||[]).length?`<div class="card"><h3>Topics</h3><p class="sm muted">Tap a topic to study it with the AI helper below.</p><div class="row"><button id="allg">Study guide for every topic</button></div><div class="row" style="flex-wrap:wrap">${cur.topics.map((t,i)=>`<button class="tp" data-i="${i}">${esc(t)}</button>`).join("")}</div></div>`:`<p class="sm muted">No topics yet. Add them under Course outline.</p>`}
  <div class="card"><h3>Add material</h3><div class="row"><select id="mt"><option value="note">Note / pasted text</option><option value="link">Web link (book, article)</option><option value="3d">3D lesson (embed link or .glb)</option><option value="photo">Photo of a page (handwriting, slides)</option><option value="file">File (PDF, slides, .txt)</option></select>
  <input id="ti" placeholder="Title"></div><input id="ur" placeholder="Link" hidden><textarea id="bd" placeholder="Paste text in any language"></textarea>
  <div class="row"><input type="file" id="fl"><label><input type="checkbox" id="tr" checked> Translate to English</label><button class="p" id="sv">Save</button></div><p class="err" id="e1"></p></div>
@@ -428,6 +446,10 @@ async function open(id){cur=courses.find(c=>c.id===id);view="course";drawNav();$
  <textarea id="pr" placeholder="Ask a question about this course"></textarea><div class="row"><button class="p" id="ai">Ask</button><span id="popt" class="sm muted" hidden>Writes the detailed guide first, then short slides from it</span><button class="p" id="bp" hidden>Build guide + presentation</button><span id="st" class="muted"></span></div><div id="out" class="out"></div><div id="deck"></div>
  <div class="row"><a href="/api/anki/export?courseId=${id}" download>Export cards for Anki</a><label class="muted fl">Import from Anki <input type="file" id="ai2" accept=".txt,.tsv,.csv"></label></div></div>`;
  let mode="chat";
+ if($("#allg"))$("#allg").onclick=async()=>{const st=$("#st"),o=$("#out"),b=$("#allg"),n=(cur.topics||[]).length;if(!confirm(`This researches the web and writes a full guide for each of the ${n} topics, one after another, then joins them into one guide. It can take 20 to 40 minutes and uses a lot of your free AI allowance. Keep this page open. Start?`))return;
+  st.textContent="Starting…";o.textContent="";b.disabled=true;
+  try{showGuide(id,await buildCourseGuide(id,cur,t=>st.textContent=t),cur.title,false)}catch(e){o.textContent=e.message}
+  st.textContent="";b.disabled=false};
  document.querySelectorAll(".tp").forEach(b=>b.onclick=()=>{$("#pr").value=cur.topics[+b.dataset.i];$("#pr").scrollIntoView({behavior:"smooth",block:"center"});$("#pr").focus()});
  $("#foc").onclick=()=>{T.courseId=id;saveT();go("focus")};
  const mt=$("#mt");mt.onchange=()=>{$("#fl").accept=mt.value==="photo"?"image/*":"";$("#ur").hidden=!["link","3d"].includes(mt.value)};
