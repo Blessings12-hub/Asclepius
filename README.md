@@ -15,6 +15,16 @@ A private study workspace for medical school. Single user.
 - Search: ask a question across all your materials and get an answer with numbered citations
 - Offline: installable on your phone; pages you have opened keep working without internet
 
+New in 1.4:
+
+- **Pharmacology guides now read like a pharmacology course.** Every drug topic opens with "Classification at a glance": a table of every type, subtype and class with all of its drugs, and a second table of the targets (for autonomic drugs: M1 to M5, NM, NN, alpha1, alpha2, beta1 to beta3 and so on) with where each one is and what it does when activated or blocked. Then one section per drug class with TWO tables, one row per drug in the same order: (1) subtype or target and mechanism, effects, main uses; (2) adverse effects, contraindications and interactions, usual dose, route and frequency. Physiology is kept to what explains the drug target. At most 14 drugs per section (big classes are split), up to 26 sections, 15-20 practice questions
+- **General pharmacology topics** (principles, pharmacokinetics, pharmacodynamics, interactions, adverse reactions, prescribing, special groups) get their own checklist instead of a drug table: routes, formulas with worked examples, CYP450 lists, ADR types, example drug pairs
+- **Every other course gets a full-course checklist** chosen from the course name: anatomy (relations, supply, nerve supply, muscle tables), histology and embryology, physiology, biochemistry and chemistry, microbiology and immunology (one row per organism), pathology, public health (formulas, study designs), and clinical courses (classification, criteria, investigations, first-line drugs with dose and duration). Guides have 10-16 sections, 10-14 points per section and tables of up to 25 rows
+- More topics count as drug topics (treatment regimens, antiepileptics, analgesics, anticoagulants, diuretics and so on), so TB regimens and similar get the drug layout
+- The Pharmacology course has 7 more starter topics (respiratory, gastrointestinal, blood, analgesics and anaesthetics, antimalarial/antiparasitic/antiviral, anticancer and immunosuppressant, toxicology). To get them: Course outline > Starter 6-year structure > Add. It only adds topics you do not have yet
+- PowerPoint slides for drug topics now see the drug names of each class
+- Not tested against a real AI or live websites (tested with a stand-in AI). Longer sections take longer to write and use more of the free AI allowance. Check every dose against the Zambian STG or your formulary
+
 New in 1.3:
 
 - **Presentations and PowerPoints are now separate from study guides.** The Presentation tab no longer builds a study guide. It researches the topic, writes a detailed presentation (rich sections with speaker notes, tables, glossary, questions) and offers it as its own PDF. The PowerPoint is then summarised from that presentation, with pictures. The Study guide tab is unchanged and keeps its own PDF
