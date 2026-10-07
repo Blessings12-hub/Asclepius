@@ -13,6 +13,7 @@ import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
 import { research, referenceText, findPictures, fetchImage, pool } from "./lib/media.js";
 import { deepResearch, fitSources, sourceBlock } from "./lib/research.js";
 import { makeZip } from "./lib/zip.js";
+import { getVapid, sendPush } from "./lib/push.js";
 import { THEMES, tidy, normalizeDeck, chosen, buildPptx, buildSlidePdf, normalizeGuide, normalizeSection, normalizeExtras, buildGuidePdf } from "./lib/deck.js";
 
 const { PASSWORD, SECRET = "change-me", OWNER = "Student", PORT = 3000, CRON_SECRET } = process.env;
@@ -54,7 +55,7 @@ async function getCourses() {
   }
   return c;
 }
-const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120, reminderTime: "", cardLimit: 0 };
+const DEFAULTS = { focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, dailyGoalMin: 120, reminderTime: "", cardLimit: 0, notify: { cards: true, blocks: true, exams: true, streak: true } };
 const getSettings = async () => ({ ...DEFAULTS, ...(await kv.get("settings", {})) });
 async function getRefs() {
   let r = await kv.get("refs", null);
@@ -168,7 +169,96 @@ app.get("/api/cron/backup", wrap(async (req, res) => {
   res.json({ made: await makeBackup("auto") });
 }));
 
+
+// =====================================================================================
+// NOTIFICATIONS WHEN THE APP IS CLOSED (Web Push, no extra packages)
+// The phone registers once (Settings and tools). A scheduler then calls /api/cron/notify every minute or so
+// (a free pinger such as cron-job.org works) and the server sends whatever is due: timetable blocks, the daily
+// flashcard reminder, exam countdowns and a streak nudge.
+// =====================================================================================
+const STREAK_AT = 19 * 60, EXAM_AT = 8 * 60; // minutes after local midnight
+const hm2m = (v) => +String(v).slice(0, 2) * 60 + +String(v).slice(3, 5);
+const devId = (sub) => crypto.createHash("sha1").update(sub.endpoint).digest("hex").slice(0, 8);
+const getSubs = async () => ((await kv.get("push", { subs: [] })).subs || []);
+const putSubs = (subs) => kv.set("push", { subs });
+async function pushTo(subs, payload, opts) {
+  const vapid = await getVapid(kv), out = [];
+  await Promise.all(subs.map(async (sub) => { out.push({ dev: devId(sub), ...(await sendPush(vapid, sub, payload, opts)) }); }));
+  const gone = new Set(out.filter((r) => r.gone).map((r) => r.dev));
+  if (gone.size) await putSubs((await getSubs()).filter((s) => !gone.has(devId(s))));
+  return out;
+}
+async function runNotify(nowMs = Date.now()) {
+  const subs = await getSubs();
+  await kv.set("notifyLast", nowMs);
+  if (!subs.length) return { devices: 0, sent: 0 };
+  const [settings, timetable, exams, days, courses, sent] = await Promise.all([getSettings(), kv.get("timetable", []), kv.get("exams", []), kv.get("days", {}), getCourses(), kv.get("notifySent", {})]);
+  const prefs = { cards: true, blocks: true, exams: true, streak: true, ...(settings.notify || {}) };
+  const cname = (id) => (courses.find((c) => c.id === id) || {}).title || "";
+  let due = null, count = 0; const fresh = {};
+  for (const sub of subs) {
+    const loc = new Date(nowMs + (+sub.tz || 0) * 60000), day = loc.toISOString().slice(0, 10), mins = loc.getUTCHours() * 60 + loc.getUTCMinutes(), wd = loc.getUTCDay(), dev = devId(sub);
+    const todo = [];
+    if (prefs.blocks) for (const b of timetable) {
+      const st = /^\d\d:\d\d$/.test(b.start) ? hm2m(b.start) : -1;
+      if (st < 0 || mins < st || mins >= st + 10 || !(b.days || [0, 1, 2, 3, 4, 5, 6]).includes(wd)) continue;
+      const what = b.title || cname(b.courseId) || (b.kind === "break" ? "Break" : b.kind === "meal" ? "Meal" : "Study block");
+      todo.push({ key: `blk:${b.id}`, payload: { title: b.kind === "study" ? "Study time" : b.kind === "break" ? "Break time" : what, body: `${what} · ${b.start} to ${b.end}`, tag: "blk-" + b.id, url: b.kind === "study" ? "/?go=focus" : "/" } });
+    }
+    if (prefs.cards && settings.reminderTime && mins >= hm2m(settings.reminderTime)) {
+      due ??= Math.min((await docs.list("cards", { numLte: nowMs, project: ["due"] })).length, await cardsLeftToday(day));
+      if (due > 0) todo.push({ key: "cards", payload: { title: "Flashcards are due", body: `${due} card${due === 1 ? "" : "s"} waiting. A few minutes keeps them fresh.`, tag: "cards", url: "/" } });
+    }
+    if (prefs.exams && mins >= EXAM_AT) for (const e of exams) {
+      const left = dnum(e.date) - dnum(day);
+      if (![0, 1, 3, 7, 14].includes(left)) continue;
+      todo.push({ key: "exam:" + e.id, payload: { title: left === 0 ? "Exam today" : left === 1 ? "Exam tomorrow" : `Exam in ${left} days`, body: `${e.title || cname(e.courseId) || "Exam"}${e.title && cname(e.courseId) ? " · " + cname(e.courseId) : ""}`, tag: "exam-" + e.id, url: "/?go=focus" } });
+    }
+    if (prefs.streak && mins >= STREAK_AT) {
+      const st = streakOf(days, day);
+      if (st.current > 0 && !st.activeToday) todo.push({ key: "streak", payload: { title: `Keep your ${st.current}-day streak`, body: "You have not studied yet today. One card or a few minutes of focus is enough.", tag: "streak", url: "/" } });
+    }
+    for (const t of todo) {
+      const k = `${dev}:${t.key}:${day}`;
+      if (sent[k] || fresh[k]) continue;
+      const r = (await pushTo([sub], t.payload, { ttl: t.key.startsWith("blk") ? 600 : 6 * 3600 }))[0];
+      if (r.ok || r.gone) { fresh[k] = nowMs; count++; }
+    }
+  }
+  if (Object.keys(fresh).length || Object.keys(sent).length > 400) {
+    const keep = Object.fromEntries(Object.entries({ ...sent, ...fresh }).filter(([, ts]) => nowMs - ts < 4 * 864e5));
+    await kv.set("notifySent", keep);
+  }
+  return { devices: subs.length, sent: count };
+}
+// Called by a scheduler. Accepts "Authorization: Bearer <CRON_SECRET>" or ?key=<CRON_SECRET> (for pingers that cannot set headers).
+app.all("/api/cron/notify", wrap(async (req, res) => {
+  const given = (req.headers.authorization || "").replace(/^Bearer /, "") || String(req.query.key || "");
+  if (!CRON_SECRET || !same(given, CRON_SECRET)) throw bad("unauthorized", 401);
+  res.json(await runNotify());
+}));
+
 app.use("/api", guard);
+
+
+// ---- notifications: register this phone, test, status ----
+app.get("/api/push/key", wrap(async (q, res) => res.json({ key: (await getVapid(kv)).pub })));
+app.post("/api/push/subscribe", wrap(async (req, res) => {
+  const sub = req.body.sub || {};
+  if (!/^https:\/\//.test(String(sub.endpoint || "")) || !sub.keys?.p256dh || !sub.keys?.auth) throw bad("That does not look like a push subscription");
+  const tz = Math.max(-840, Math.min(840, Math.round(+req.body.tz) || 0));
+  const subs = (await getSubs()).filter((s) => s.endpoint !== sub.endpoint);
+  subs.push({ endpoint: String(sub.endpoint).slice(0, 700), keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) }, tz, at: Date.now() });
+  await putSubs(subs.slice(-10)); res.json({ ok: 1, devices: Math.min(subs.length, 10) });
+}));
+app.post("/api/push/unsubscribe", wrap(async (req, res) => { await putSubs((await getSubs()).filter((s) => s.endpoint !== String(req.body.endpoint))); res.json({ ok: 1 }); }));
+app.get("/api/push/status", wrap(async (q, res) => res.json({ devices: (await getSubs()).length, lastCheck: await kv.get("notifyLast", null), cronSecretSet: !!CRON_SECRET, notify: (await getSettings()).notify })));
+app.post("/api/push/test", wrap(async (req, res) => {
+  const subs = await getSubs();
+  if (!subs.length) throw bad("No phone is registered yet. Turn notifications on first.");
+  const r = await pushTo(subs, { title: "Asclepius", body: "Notifications are working, even with the app closed.", tag: "test", url: "/" }, { ttl: 300, urgency: "high" });
+  res.json({ results: r.map((x) => ({ ok: x.ok, status: x.status, gone: x.gone })) });
+}));
 
 // ---- uploaded files ----
 const FILE_KEY = /^[a-f0-9]{12}\.[a-z0-9]{1,8}$/;
@@ -1048,6 +1138,10 @@ app.put("/api/settings", wrap(async (req, res) => {
     const t = String(req.body.reminderTime);
     if (t && !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) throw bad("Reminder time must look like 19:30");
     cur.reminderTime = t;
+  }
+  if (req.body.notify && typeof req.body.notify === "object") {
+    cur.notify = { ...DEFAULTS.notify, ...(cur.notify || {}) };
+    for (const k of Object.keys(DEFAULTS.notify)) if (req.body.notify[k] !== undefined) cur.notify[k] = !!req.body.notify[k];
   }
   await kv.set("settings", cur);
   res.json(cur);
