@@ -58,6 +58,7 @@ a{color:var(--acc)}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
 label.f{display:block;font-size:14px;color:var(--muted)}label.f input,label.f textarea{margin-top:2px;color:var(--ink)}
 .eq{background:var(--card);border:1px solid var(--line);border-left:4px solid #2FB58C;border-radius:8px;padding:8px 10px;margin:6px 0}.eqf{font-size:1.08em;margin:3px 0;word-break:break-word}.dg svg{display:block;margin:0 auto}.fg{margin:10px 0;text-align:center}.fg img{max-width:100%;max-height:340px;background:#fff;border-radius:8px}.fg figcaption{text-align:left;margin-top:4px}
+.rx{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}.rt{display:inline-flex;flex-direction:column;align-items:center;text-align:center;background:var(--bg,#fff);border:1px solid #1F7A5C;border-radius:8px;padding:5px 9px;line-height:1.25}.rt small{opacity:.7;font-size:.8em}.rp{font-weight:700;font-size:1.2em}.rg{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}.ra{display:inline-flex;flex-direction:column;align-items:center;min-width:84px;max-width:170px;text-align:center}.ra i{font-style:normal;font-weight:700;font-size:.78em;color:#1F7A5C}.ra u{text-decoration:none;font-size:1.9em;line-height:.9;color:#1F7A5C}.ra em{font-style:normal;font-size:.72em;opacity:.75}
 table.ref{width:100%;border-collapse:collapse}
 table.ref th{text-align:left;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line);padding:6px 8px}
 table.ref td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -338,6 +339,7 @@ function guideHTML(g){
  (g.questions.length?`<div class="sgq"><h4>Test yourself</h4><p class="sm muted">Think first, then tap a question to see the answer.</p>${g.questions.map((x,i)=>`<details><summary><b>${i+1}.</b> ${esc(x.q)}</summary><p>${esc(x.a)}</p></details>`).join("")}</div>`:"")+
  (g.sources.length?`<details class="sgs"><summary>Sources (${g.sources.length})</summary><ol class="sm">${g.sources.map(x=>`<li value="${x.n}"><b>${esc(x.site)}</b>: ${ln(x,x.title)}${(x.links||[]).map(l=>` · ${ln(l,l.title||"page")}`).join("")}</li>`).join("")}</ol></details>`:"")+`</div>`}
 /* ---------- reactions, pathway diagrams and pictures inside guides ---------- */
+const io = (s, m = 16) => { const a = String(s?.in || "").slice(0, m), b = String(s?.out || "").slice(0, m); return a && b ? `${a} → ${b}` : a ? `+ ${a}` : b ? `→ ${b}` : ""; };
 function layoutDiagram(d) {
   const n = d.nodes.length, cw = 6.4, cut = (s, m) => String(s || "").slice(0, m);
   const tw = (s) => Math.ceil(String(s).length * cw);
@@ -357,7 +359,7 @@ function layoutDiagram(d) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, ox = mx - cx, oy = my - cy, ol = Math.hypot(ox, oy) || 1;
       const lx = mx + (ox / ol) * 34, ly = my + (oy / ol) * 22, side = ox > 8 ? "start" : ox < -8 ? "end" : "middle";
       if (s.label) labels.push({ x: lx, y: ly, t: cut(s.label, 24), anchor: side, bold: true });
-      const sub = [s.in ? "+ " + cut(s.in, 16) : "", s.out ? "→ " + cut(s.out, 16) : ""].filter(Boolean).join("  ");
+      const sub = io(s);
       if (sub) labels.push({ x: lx, y: ly + 12, t: sub, anchor: side, small: true });
     }
     return { w: W, h: H, boxes, arrows, labels };
@@ -371,9 +373,9 @@ function layoutDiagram(d) {
       arrows.push({ x1: cx, y1: y + bh + 2, x2: cx, y2: y + bh + gap - 2 });
       const s = d.steps[i]; if (!s) return;
       const my = y + bh + gap / 2 + 4;
-      if (s.label) labels.push({ x: cx + 10, y: my - (s.out ? 5 : 0), t: cut(s.label, 34), anchor: "start", bold: true });
-      if (s.out) labels.push({ x: cx + 10, y: my + 7, t: "→ " + cut(s.out, 30), anchor: "start", small: true });
-      if (s.in) labels.push({ x: cx - 10, y: my, t: "+ " + cut(s.in, 30), anchor: "end", small: true });
+      if (s.label) labels.push({ x: cx + 10, y: my, t: cut(s.label, 34), anchor: "start", bold: true });
+      const sub = io(s, 14);
+      if (sub) labels.push({ x: cx - 10, y: my, t: sub, anchor: "end", small: true });
     }
   });
   return { w: W, h: 10 + n * (bh + gap) - gap + 10, boxes, arrows, labels };
@@ -383,10 +385,13 @@ function diagSvg(d){const G=layoutDiagram(d),X=v=>Math.round(v*10)/10;
  G.arrows.map(a=>`<line x1="${X(a.x1)}" y1="${X(a.y1)}" x2="${X(a.x2)}" y2="${X(a.y2)}" stroke="#1F7A5C" stroke-width="1.6" marker-end="url(#ah)"/>`).join("")+
  G.boxes.map(b=>`<rect x="${X(b.x)}" y="${X(b.y)}" width="${X(b.w)}" height="${X(b.h)}" rx="5" fill="var(--card,#fff)" stroke="#1F7A5C" stroke-width="1.4"/><text x="${X(b.x+b.w/2)}" y="${X(b.y+b.h/2+4)}" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor">${esc(b.t)}</text>`).join("")+
  G.labels.map(l=>`<text x="${X(l.x)}" y="${X(l.y)}" text-anchor="${l.anchor}" font-size="${l.small?10.5:11.5}" ${l.bold?'font-weight="700" fill="#1F7A5C"':'fill="currentColor" opacity=".75"'}>${esc(l.t)}</text>`).join("")+
- `</svg></div><p class="sm muted">${d.type==="chain"?"Left of an arrow: what is used. Right: the enzyme, then what is released.":"Beside each arrow: the enzyme, then what is used (+) and released (arrow)."}</p></div>`}
-const eqHTML=a=>a&&a.length?`<div class="eqs"><p class="sm"><b>Reactions and formulas</b></p>${a.map(e=>`<div class="eq">${e.name?`<div class="sm"><b>${esc(e.name)}</b></div>`:""}<div class="eqf">${esc(e.eq)}</div>${e.note?`<div class="sm muted">${esc(e.note)}</div>`:""}</div>`).join("")}</div>`:"";
+ `</svg></div><p class="sm muted">Bold: the enzyme on that step. Small text: what goes in and what comes out (for example ATP → ADP).</p></div>`}
+const rxTerm=t=>`<span class="rt"><b>${esc(t.name)}</b>${t.formula?`<small>${esc(t.formula)}</small>`:""}</span>`;
+const rxSide=a=>a.map((t,k)=>k?`<span class="rg"><span class="rp">+</span>${rxTerm(t)}</span>`:rxTerm(t)).join("");
+const eqLine=e=>e.reactants&&e.reactants.length?`${e.reactants.map(t=>t.name).join(" + ")} ${e.reversible?"<->":"->"} ${e.products.map(t=>t.name).join(" + ")}${e.enzyme?" ["+e.enzyme+"]":""}`:e.eq;
+const eqHTML=a=>a&&a.length?`<div class="eqs"><p class="sm"><b>Reactions and formulas</b></p>${a.map(e=>`<div class="eq">${e.name?`<div class="sm"><b>${esc(e.name)}</b></div>`:""}${e.reactants&&e.reactants.length?`<div class="rx">${rxSide(e.reactants)}<span class="ra"><i>${esc(e.enzyme||"")}</i><u>${e.reversible?"⇌":"⟶"}</u><em>${esc(e.conditions||"")}</em></span>${rxSide(e.products)}</div>`:`<div class="eqf">${esc(e.eq)}</div>`}${e.note?`<div class="sm muted">${esc(e.note)}</div>`:""}</div>`).join("")}</div>`:"";
 const figHTML=f=>f&&f.url?`<figure class="fg"><img src="${esc(f.url)}" alt="${esc(f.caption||f.query||"")}" loading="lazy" referrerpolicy="no-referrer"><figcaption class="sm muted">${esc(f.caption||"")}${f.caption?". ":""}Picture: ${f.page?`<a href="${esc(f.page)}" target="_blank" rel="noopener">${esc(f.credit||"source")}</a>`:esc(f.credit||"")}. Found automatically, check it matches the topic.</figcaption></figure>`:"";
-const guideTxt=g=>[g.title,"",g.overview,"",...(g.objectives.length?["WHAT YOU SHOULD KNOW",...g.objectives.map(p=>"- "+p),""]:[]),...g.sections.flatMap((s,i)=>[`${i+1}. ${s.heading.toUpperCase()}`,...(s.intro?[s.intro]:[]),...s.points.map(p=>"- "+p),...(s.tables&&s.tables.length?s.tables:(s.table?[s.table]:[])).flatMap(t=>[...(t.title?[t.title]:[]),t.head.join(" | "),...t.rows.map(r=>r.join(" | "))]),...(s.equations&&s.equations.length?["REACTIONS AND FORMULAS",...s.equations.map(e=>`${e.name?e.name+": ":""}${e.eq}${e.note?" ("+e.note+")":""}`)]:[]),...(s.diagram?[`${s.diagram.title||"Pathway"}: `+s.diagram.nodes.map((n,k)=>n+(s.diagram.steps[k]&&s.diagram.steps[k].label?` [${s.diagram.steps[k].label}] ->`:" ->")).join(" ")]:[]),...(s.script?["What to say: "+s.script]:[]),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),...(s.clinical?["Clinical link: "+s.clinical]:[]),""]),...(g.glossary.length?["GLOSSARY",...g.glossary.map(x=>`- ${x.term}: ${x.def}`),""]:[]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
+const guideTxt=g=>[g.title,"",g.overview,"",...(g.objectives.length?["WHAT YOU SHOULD KNOW",...g.objectives.map(p=>"- "+p),""]:[]),...g.sections.flatMap((s,i)=>[`${i+1}. ${s.heading.toUpperCase()}`,...(s.intro?[s.intro]:[]),...s.points.map(p=>"- "+p),...(s.tables&&s.tables.length?s.tables:(s.table?[s.table]:[])).flatMap(t=>[...(t.title?[t.title]:[]),t.head.join(" | "),...t.rows.map(r=>r.join(" | "))]),...(s.equations&&s.equations.length?["REACTIONS AND FORMULAS",...s.equations.map(e=>`${e.name?e.name+": ":""}${eqLine(e)}${e.note?" ("+e.note+")":""}`)]:[]),...(s.diagram?[`${s.diagram.title||"Pathway"}: `+s.diagram.nodes.map((n,k)=>n+(s.diagram.steps[k]&&s.diagram.steps[k].label?` [${s.diagram.steps[k].label}] ->`:" ->")).join(" ")]:[]),...(s.script?["What to say: "+s.script]:[]),...(s.mnemonic?["Memory aid: "+s.mnemonic]:[]),...(s.clinical?["Clinical link: "+s.clinical]:[]),""]),...(g.glossary.length?["GLOSSARY",...g.glossary.map(x=>`- ${x.term}: ${x.def}`),""]:[]),...(g.high_yield.length?["HIGH-YIELD",...g.high_yield.map(p=>"- "+p),""]:[]),...(g.pitfalls.length?["COMMON PITFALLS",...g.pitfalls.map(p=>"- "+p),""]:[]),...(g.questions.length?["PRACTICE QUESTIONS",...g.questions.flatMap((x,i)=>[`${i+1}. ${x.q}`,"   Answer: "+x.a])]:[])].join("\n");
 const saveBlob=(b,name)=>{const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)};
 const fname=t=>(String(t||"").replace(/[^\w\- ]+/g,"").trim().slice(0,60)||"study");
 const jpost=(u,b)=>api(u,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
