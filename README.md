@@ -186,3 +186,9 @@ The app uses Google Gemini or Groq, both of which have free tiers that I believe
 - Presentations carry your name (`OWNER`) in the file properties. Check your school's AI policy for graded work.
 - The drug and lab tables are for study. The starter rows come from general textbook knowledge, contain no doses, and have not been checked against any particular formulary or laboratory. Normal ranges differ between labs and countries. Check against your own textbooks and local guidelines, and edit freely.
 - Offline mode needs HTTPS (or localhost) to install.
+
+
+## New in 1.6
+- **Exam essentials (default).** Study guides and presentations are now short and only hold what is needed to pass. Each subject follows the way it is actually studied (for example topographic anatomy: boundaries, layers, spaces, neurovascular bundles, weak points, approaches, operations; biochemistry: pathway flow, rate-limiting enzyme, regulation, diseases). Choose "Full detail" in the Guide length box for the long version.
+- **Structures in reactions.** For biochemistry and chemistry, each compound in a reaction gets a skeletal-formula picture from Wikimedia Commons when one is found; otherwise the name box stays.
+- Fixed: Biochemistry was mistaken for Chemistry.
