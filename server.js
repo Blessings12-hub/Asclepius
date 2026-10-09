@@ -10,6 +10,8 @@ import { kv, docs, files, backups, cloud, mode, ready, onVercel, UPLOAD_DIR } fr
 import { seedCourses, seedRefs, courseId, STARTER_VERSION } from "./lib/seed.js";
 import { makeBackup, backupIfStale, listBackups, snapshot, restore } from "./lib/backup.js";
 import { ai, parseJSON, info as aiInfo, ctxChars } from "./lib/ai.js";
+import { resolveSection, molSvg } from "./lib/structs.js";
+import { isPill } from "./lib/compounds.js";
 import { research, referenceText, findPictures, structureImage, fetchImage, pool } from "./lib/media.js";
 import { deepResearch, fitSources, sourceBlock, subjectKind, disciplineOf, VIS_COMMON } from "./lib/research.js";
 import { makeZip } from "./lib/zip.js";
@@ -294,6 +296,12 @@ app.get("/files/:name", guard, wrap(async (req, res) => {
 }));
 
 // ---- courses & materials ----
+// a structure symbol as a picture: /api/mol.svg?s=<SMILES>&n=<name>&f=<formula> (the library is tried by name first)
+app.get("/api/mol.svg", (req, res) => {
+  const svg = molSvg({ s: String(req.query.s || "").slice(0, 400), n: String(req.query.n || "").slice(0, 80), f: String(req.query.f || "").slice(0, 70) });
+  if (!svg) return res.status(404).type("text/plain").send("no structure");
+  res.set("Cache-Control", "private, max-age=86400").type("image/svg+xml").send(svg);
+});
 app.get("/api/courses", wrap(async (q, res) => res.json(await getCourses())));
 const cleanTopics = (t) => (Array.isArray(t) ? t : String(t || "").split("\n")).map((x) => String(x).trim().slice(0, 120)).filter(Boolean).slice(0, 80);
 const okYear = (y) => Number.isInteger(+y) && +y >= 1 && +y <= 8;
@@ -507,11 +515,13 @@ Do NOT leave out any drug in the focus, and add an important drug of this class 
   const planned = OVERVIEW ? o.sections.slice(1).map((s) => `${s.heading} (${s.focus})`).join("\n").slice(0, 7000) : "";
   const raw = await claude(sys, `Guide: ${tidy(o.title, 100) || topic}\nAll sections: ${others}${planned ? "\nPLANNED CLASS SECTIONS WITH THEIR DRUGS:\n" + planned : ""}\nWRITE SECTION ${i + 1}: ${sec.heading}\nFocus: ${sec.focus}\n\nSTUDENT MATERIALS:\n${await studentMats(req.body.courseId, 5000)}\n\nSOURCES:\n${sourceBlock(src)}`, kind === "drugs" ? (OVERVIEW ? 6500 : exam ? 6000 : 8000) : talk ? 6200 : exam ? 4200 : 5600, { json: true });
   const section = normalizeSection(parseJSON(raw), sec.heading);
-  // draw real structures: look up a skeletal-formula picture for each compound of a reaction (none found = a name box)
+  // structure symbols: drawn from the compound library or the AI's SMILES (lib/structs.js); a compound that cannot be drawn stays a name box,
+  // and in chemistry sections a skeletal-formula picture from Wikimedia Commons is tried for those
+  resolveSection(section);
   if (section.equations?.length && /biochem|chem/.test(disciplineOf(course?.title, topic).id)) {
     try {
-      const terms = section.equations.flatMap((e) => [...(e.reactants || []), ...(e.products || [])]);
-      await Promise.race([pool([...new Set(terms.map((t) => t.name))].slice(0, 40), 5, async (nm) => { const u = await structureImage(nm); if (u) terms.filter((t) => t.name === nm).forEach((t) => { t.img = u; }); }, Date.now() + 9000), sleep(10000)]);
+      const terms = section.equations.flatMap((e) => [...(e.reactants || []), ...(e.products || [])]).filter((t) => !t.smiles && !isPill(t.name));
+      await Promise.race([pool([...new Set(terms.map((t) => t.name))].slice(0, 20), 5, async (nm) => { const u = await structureImage(nm); if (u) terms.filter((t) => t.name === nm).forEach((t) => { t.img = u; }); }, Date.now() + 7000), sleep(8000)]);
     } catch {}
   }
   // find a real picture for the figure the AI asked for; no picture found means no figure
